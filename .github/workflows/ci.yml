@@ -75,7 +75,7 @@ jobs:
         working-directory: yuki
         run: |
           set -o pipefail
-          yukino build --release 2>&1 | tee /tmp/build.log
+          yukino build release 2>&1 | tee /tmp/build.log
 
       - name: Selftest
         working-directory: yuki
