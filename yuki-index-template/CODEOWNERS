@@ -1,0 +1,5 @@
+# Только владельцы реестра могут менять подписанные записи и ключи.
+/index/        @YOUR-ORG/index-maintainers
+/catalog.json* @YOUR-ORG/index-maintainers
+/keys/         @YOUR-ORG/index-owners
+/.github/      @YOUR-ORG/index-owners

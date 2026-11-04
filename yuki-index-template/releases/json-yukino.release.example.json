@@ -1,0 +1,8 @@
+{
+  "name": "json-yukino",
+  "kind": "lib",
+  "version": "1.2.0",
+  "summary": "fast JSON for Yukino projects",
+  "url": "https://github.com/YOU/json-yukino/archive/9c1e5a77d0b3c2f4a1e8d47b6f90a1b2c3d4e5f6.tar.gz",
+  "deps": ["ansi-kit@2.0.1"]
+}

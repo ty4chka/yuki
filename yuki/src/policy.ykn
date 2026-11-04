@@ -1,0 +1,55 @@
+// policy.ykn — что пакет вообще может положить в систему.
+// Правила применяются к уже проверенному архиву, на стороне root.
+
+load std.strings: starts_with, contains, eq, ends_with
+load .verify: is_safe_rel_path
+
+fun starts_any(p: string, prefixes: string[]) -> bool {
+    for i in 0..prefixes.len() {
+        if starts_with(p, prefixes[i]) {
+            return true
+        }
+    }
+    return false
+}
+
+// Пустая строка — путь допустим, иначе причина отказа.
+public fun policy_check(pkg: string, rel: string) -> string {
+    if !is_safe_rel_path(rel) {
+        return "unsafe path"
+    }
+    if contains(rel, " ") || contains(rel, "\t") || contains(rel, "\n") || contains(rel, "|") {
+        return "whitespace or | in a path"
+    }
+    if ends_with(rel, ".yuki-tmp") || ends_with(rel, ".yuki-new") || ends_with(rel, ".yuki-save") {
+        return "reserved file suffix"
+    }
+    set allowed = ["usr/", "opt/", "etc/"]
+    if !starts_any(rel + "/", allowed) {
+        return "outside of usr/, opt/ and etc/"
+    }
+
+    // то, чего пакет не может касаться никогда
+    set never = [
+        "etc/yuki", "usr/lib/yuki", "usr/share/yuki", "var/lib/yuki",
+        "etc/sudoers", "etc/pam.d", "etc/pam.conf", "etc/security",
+        "etc/passwd", "etc/shadow", "etc/group", "etc/gshadow", "etc/subuid", "etc/subgid",
+        "etc/ssh/", "etc/ld.so", "etc/cron", "etc/fstab", "etc/crypttab", "etc/doas.conf",
+        "etc/ssl/", "etc/ca-certificates", "usr/share/ca-certificates", "usr/local/share/ca-certificates",
+        "usr/lib/modules", "usr/lib/firmware", "usr/bin/sudo", "usr/bin/su", "usr/bin/doas", "usr/bin/pkexec"
+    ]
+    if starts_any(rel, never) {
+        return "path is protected"
+    }
+
+    // бинарник самого yuki может заменить только пакет yuki
+    if starts_with(rel, "usr/bin/yuki") && !eq(pkg, "yuki") {
+        return "only the yuki package may replace yuki"
+    }
+    return ""
+}
+
+// Файлы в etc/ — конфигурация: изменённые пользователем не перезаписываются.
+public fun is_config(rel: string) -> bool {
+    return starts_with(rel, "etc/")
+}

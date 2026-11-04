@@ -1,0 +1,442 @@
+// main.ykn — точка входа yuki: флаги в стиле pacman, диспетчер команд, единая обработка ошибок.
+
+load std.io: println
+load std.strings: eq, starts_with, slice, str_join, parse_int
+load std.env: get_or, set_env
+load std.fs.archives.tar: TarError
+load .ui: banner, diag_error, warn, c_dim, c_accent
+load .theme: theme_init, theme_warning
+load .priv: is_root
+load .errors: YukiError, err
+load .verify: VerifyError
+load .explain: hint_line
+load .cmdlist: suggest, help_lines
+load .sysdb: db_has
+load .sysinstall: cmd_sys_install_many, cmd_sys_uninstall, cmd_sys_autoremove, cmd_sys_upgrade, cmd_sys_info, cmd_sys_files, cmd_sys_owns, cmd_sys_check, cmd_sys_audit, cmd_sys_history, cmd_sys_rollback
+load .tools: cmd_show, cmd_outdated, cmd_search, cmd_list, cmd_orphans, cmd_tree, cmd_rdeps, cmd_related, cmd_graph, cmd_why, cmd_doctor, cmd_config, cmd_clean, cmd_hold, cmd_unhold, cmd_export, cmd_import, cmd_explain, cmd_completions, cmd_help, cmd_pack
+load .indexadmin: cmd_index_add, cmd_index_check, cmd_index_catalog, cmd_index_renew_all, cmd_index_cosign
+load .rotation: cmd_keys_refresh
+load .selftest: cmd_selftest
+load .cmds: cmd_verify, cmd_verify_sig, cmd_inspect, cmd_add, cmd_remove, cmd_install, cmd_update, cmd_audit, cmd_publish, cmd_yank, cmd_renew, cmd_keys_gen, cmd_keys_export, cmd_keys_sign, cmd_keys_list, cmd_keys_trust, cmd_keys_untrust, cmd_theme_path, cmd_theme_init, cmd_theme_show
+
+static VERSION: string = "0.1.0"
+
+fun row(cmd: string, args: string, what: string) {
+    println("    " + c_accent(cmd) + " " + args + c_dim("   " + what))
+}
+
+fun usage() {
+    banner(VERSION)
+    println("  system  " + c_dim("(like pacman; changing the system needs sudo)"))
+    row("install", "<pkg>...", "binary for your platform, or build from source")
+    row("reinstall | uninstall", "<pkg>...", "repair or remove (-Rs also removes unneeded deps)")
+    row("upgrade | self-update", "[pkg]", "move to newer signed releases")
+    row("autoremove", "", "remove orphaned dependencies")
+    row("hold | unhold", "<pkg>", "keep a package at its version")
+    row("rollback | history", "[id]", "undo a transaction, see the log")
+    println("")
+    println("  look around  " + c_dim("(no root needed)"))
+    row("search | show", "<word> | <pkg>", "find packages, read their description")
+    row("list | info | files", "", "what is installed")
+    row("owns | why", "<path> | <pkg>", "who owns a file, why a package is here")
+    row("tree | rdeps | related", "<pkg>", "dependencies, dependents, both")
+    row("graph", "[dot]", "the whole installed graph, or Graphviz")
+    row("outdated | orphans", "", "what can be upgraded, what is unneeded")
+    row("check | sys-audit", "[pkg]", "files vs database, withdrawn versions")
+    row("export | import", "[file]", "move a package list between machines")
+    println("")
+    println("  project  " + c_dim("(libraries in yuki.toml)"))
+    row("add | remove", "<lib>", "resolve, verify, pin in yuki.toml")
+    row("fetch | update | audit", "", "re-verify, upgrade, compare with the index")
+    println("")
+    println("  trust and look")
+    row("keys", "gen|trust|untrust|list|export|refresh", "signing keys and trusted keys")
+    row("theme", "init|show|path", "colors, symbols, animation")
+    println("")
+    println("  maintainers")
+    row("pack", "<name> <dir> <out>", "build a package archive")
+    row("index", "add|check|catalog|renew-all", "manage the index repository")
+    row("publish | yank | renew", "", "library releases")
+    println("")
+    println("  help  " + c_dim("(yuki help <command>, yuki explain <code>)"))
+    row("doctor | config | clean", "", "check the setup, show settings, free cache")
+    row("selftest", "", "check this build: hashes, signatures, threads")
+    row("completions", "bash|zsh|fish", "shell completion")
+    println("")
+    println(c_dim("  pacman-style flags: -S -Ss -Si -Syu -R -Rs -Q -Qi -Ql -Qo -Qe -Qd -Qdt -Qu -Qk"))
+    println(c_dim("  options: --yes --allow-build --overwrite --force --recursive"))
+    println(c_dim("  YUKI_INDEX sets the index URL, NO_COLOR=1 disables colors"))
+}
+
+fun code_str(n: int32) -> string {
+    set s = cast(n, "string")
+    for i in 0..(4 - s.len()) {
+        rewrite s = "0" + s
+    }
+    return "Y" + s
+}
+
+// ── флаги в стиле pacman → обычные команды ──────────────────────────────
+
+fun rest_of(ref raw: string[]) -> string[] {
+    set out: string[] = []
+    for i in 1..raw.len() {
+        out.push(raw[i])
+    }
+    return out
+}
+
+fun with_cmd(cmd: string, ref raw: string[]) -> string[] {
+    set out: string[] = [cmd]
+    for i in 1..raw.len() {
+        out.push(raw[i])
+    }
+    return out
+}
+
+fun translate(ref raw: string[]) -> string[] {
+    set f = raw[0]
+    if eq(f, "-S") { return with_cmd("install", ref raw) }
+    if eq(f, "-Sy") || eq(f, "-Syu") || eq(f, "-Su") { return with_cmd("upgrade", ref raw) }
+    if eq(f, "-Ss") { return with_cmd("search", ref raw) }
+    if eq(f, "-Si") { return with_cmd("show", ref raw) }
+    if eq(f, "-Sc") { return with_cmd("clean", ref raw) }
+    if eq(f, "-Scc") {
+        set a = with_cmd("clean", ref raw)
+        a.push("all")
+        return a
+    }
+    if eq(f, "-R") { return with_cmd("uninstall", ref raw) }
+    if eq(f, "-Rs") || eq(f, "-Rns") || eq(f, "-Rsn") {
+        set_env("YUKI_RECURSIVE", "1")
+        return with_cmd("uninstall", ref raw)
+    }
+    if eq(f, "-Q") { return with_cmd("list", ref raw) }
+    if eq(f, "-Qi") { return with_cmd("info", ref raw) }
+    if eq(f, "-Ql") { return with_cmd("files", ref raw) }
+    if eq(f, "-Qo") { return with_cmd("owns", ref raw) }
+    if eq(f, "-Qu") { return with_cmd("outdated", ref raw) }
+    if eq(f, "-Qk") { return with_cmd("check", ref raw) }
+    if eq(f, "-Qs") { return with_cmd("list", ref raw) }
+    if eq(f, "-Qe") { return ["list", "explicit"] }
+    if eq(f, "-Qd") { return ["list", "deps"] }
+    if eq(f, "-Qdt") || eq(f, "-Qtd") { return ["orphans"] }
+    if eq(f, "-V") { return ["version"] }
+    if eq(f, "-h") { return ["help"] }
+    panic(err("unknown option " + f + ": try `yuki help`", 201, f))
+}
+
+// Флаги превращаются в переменные окружения, остальное — позиционные аргументы.
+fun strip_flags(ref raw: string[]) -> string[] {
+    set out: string[] = []
+    for i in 0..raw.len() {
+        if eq(raw[i], "--yes") || eq(raw[i], "-y") {
+            set_env("YUKI_YES", "1")
+        } elif eq(raw[i], "--allow-build") {
+            set_env("YUKI_ALLOW_BUILD", "1")
+        } elif eq(raw[i], "--overwrite") {
+            set_env("YUKI_OVERWRITE", "1")
+        } elif eq(raw[i], "--force") {
+            set_env("YUKI_FORCE", "1")
+        } elif eq(raw[i], "--recursive") {
+            set_env("YUKI_RECURSIVE", "1")
+        } elif eq(raw[i], "--help") {
+            set_env("YUKI_HELP", "1")
+        } else {
+            out.push(raw[i])
+        }
+    }
+    return out
+}
+
+fun is_system_cmd(cmd: string) -> bool {
+    return eq(cmd, "install") || eq(cmd, "reinstall") || eq(cmd, "uninstall") || eq(cmd, "autoremove") || eq(cmd, "upgrade") || eq(cmd, "self-update") || eq(cmd, "list") || eq(cmd, "info") || eq(cmd, "files") || eq(cmd, "owns") || eq(cmd, "why") || eq(cmd, "tree") || eq(cmd, "rdeps") || eq(cmd, "related") || eq(cmd, "graph") || eq(cmd, "orphans") || eq(cmd, "outdated") || eq(cmd, "search") || eq(cmd, "show") || eq(cmd, "check") || eq(cmd, "sys-audit") || eq(cmd, "hold") || eq(cmd, "unhold") || eq(cmd, "history") || eq(cmd, "rollback") || eq(cmd, "export") || eq(cmd, "import") || eq(cmd, "doctor") || eq(cmd, "config")
+}
+
+// ── диспетчеры ──────────────────────────────────────────────────────────
+
+fun force() -> bool {
+    return eq(get_or("YUKI_FORCE", ""), "1")
+}
+
+// true — команда распознана и выполнена
+fun run_system(ref argv: string[]) -> bool {
+    set cmd = argv[0]
+    set n = argv.len()
+    if eq(cmd, "install") && n >= 2 {
+        set specs = rest_of(ref argv)
+        cmd_sys_install_many(ref specs)
+    } elif eq(cmd, "reinstall") && n >= 2 {
+        set_env("YUKI_REINSTALL", "1")
+        set specs = rest_of(ref argv)
+        cmd_sys_install_many(ref specs)
+    } elif eq(cmd, "uninstall") && n >= 2 {
+        for i in 1..n {
+            cmd_sys_uninstall(argv[i], force())
+        }
+    } elif eq(cmd, "autoremove") && n == 1 {
+        cmd_sys_autoremove()
+    } elif eq(cmd, "upgrade") && n <= 2 {
+        if n == 2 {
+            cmd_sys_upgrade(argv[1])
+        } else {
+            cmd_sys_upgrade("")
+        }
+    } elif eq(cmd, "self-update") && n == 1 {
+        if !db_has("yuki") {
+            panic(err("yuki was not installed by yuki: run `sudo yuki install yuki` once", 770, "yuki"))
+        }
+        cmd_sys_upgrade("yuki")
+    } elif eq(cmd, "hold") && n <= 2 {
+        if n == 2 {
+            cmd_hold(argv[1])
+        } else {
+            cmd_hold("")
+        }
+    } elif eq(cmd, "unhold") && n == 2 {
+        cmd_unhold(argv[1])
+    } elif eq(cmd, "history") && n == 1 {
+        cmd_sys_history()
+    } elif eq(cmd, "rollback") && n <= 2 {
+        if n == 2 {
+            cmd_sys_rollback(argv[1])
+        } else {
+            cmd_sys_rollback("")
+        }
+    } elif eq(cmd, "list") && n <= 2 {
+        if n == 2 {
+            cmd_list(argv[1])
+        } else {
+            cmd_list("")
+        }
+    } elif eq(cmd, "info") && n == 2 {
+        cmd_sys_info(argv[1])
+    } elif eq(cmd, "files") && n == 2 {
+        cmd_sys_files(argv[1])
+    } elif eq(cmd, "owns") && n == 2 {
+        cmd_sys_owns(argv[1])
+    } elif eq(cmd, "why") && n == 2 {
+        cmd_why(argv[1])
+    } elif eq(cmd, "tree") && n == 2 {
+        cmd_tree(argv[1])
+    } elif eq(cmd, "rdeps") && n == 2 {
+        cmd_rdeps(argv[1])
+    } elif eq(cmd, "related") && n == 2 {
+        cmd_related(argv[1])
+    } elif eq(cmd, "graph") && n <= 2 {
+        if n == 2 {
+            cmd_graph(argv[1])
+        } else {
+            cmd_graph("")
+        }
+    } elif eq(cmd, "orphans") && n == 1 {
+        cmd_orphans()
+    } elif eq(cmd, "outdated") && n == 1 {
+        cmd_outdated()
+    } elif eq(cmd, "search") && n >= 2 {
+        cmd_search(str_join(rest_of(ref argv), " "))
+    } elif eq(cmd, "show") && n == 2 {
+        cmd_show(argv[1])
+    } elif eq(cmd, "check") && n <= 2 {
+        if n == 2 {
+            cmd_sys_check(argv[1])
+        } else {
+            cmd_sys_check("")
+        }
+    } elif eq(cmd, "sys-audit") && n == 1 {
+        cmd_sys_audit()
+    } elif eq(cmd, "export") && n == 1 {
+        cmd_export()
+    } elif eq(cmd, "import") && n == 2 {
+        cmd_import(argv[1])
+    } elif eq(cmd, "doctor") && n == 1 {
+        cmd_doctor()
+    } elif eq(cmd, "config") && n == 1 {
+        cmd_config()
+    } else {
+        return false
+    }
+    return true
+}
+
+fun run_project(ref argv: string[]) -> bool {
+    set cmd = argv[0]
+    set n = argv.len()
+    if eq(cmd, "add") && n == 2 {
+        cmd_add(argv[1])
+    } elif eq(cmd, "remove") && n == 2 {
+        cmd_remove(argv[1])
+    } elif eq(cmd, "fetch") && n == 1 {
+        cmd_install()
+    } elif eq(cmd, "update") && n <= 2 {
+        if n == 2 {
+            cmd_update(argv[1])
+        } else {
+            cmd_update("")
+        }
+    } elif eq(cmd, "audit") && n == 1 {
+        cmd_audit()
+    } elif eq(cmd, "publish") && n >= 5 {
+        set ds: string[] = []
+        for i in 5..n {
+            ds.push(argv[i])
+        }
+        cmd_publish(argv[1], argv[2], argv[3], argv[4], ref ds)
+    } elif eq(cmd, "yank") && n == 4 {
+        cmd_yank(argv[1], argv[2], argv[3])
+    } elif eq(cmd, "renew") && n == 3 {
+        cmd_renew(argv[1], argv[2])
+    } elif eq(cmd, "pack") && n == 4 {
+        cmd_pack(argv[1], argv[2], argv[3])
+    } elif eq(cmd, "index") && n >= 2 {
+        set sub = argv[1]
+        if eq(sub, "add") && n == 4 {
+            cmd_index_add(argv[2], argv[3])
+        } elif eq(sub, "check") && n <= 3 {
+            cmd_index_check(n == 3 && eq(argv[2], "download"))
+        } elif eq(sub, "cosign") && n == 4 {
+            cmd_index_cosign(argv[2], argv[3])
+        } elif eq(sub, "catalog") && n == 3 {
+            cmd_index_catalog(argv[2])
+        } elif eq(sub, "renew-all") && (n == 3 || n == 4) {
+            set days: int64 = 30
+            if n == 4 {
+                rewrite days = parse_int(argv[3]) ?? 30
+            }
+            cmd_index_renew_all(argv[2], days)
+        } else {
+            return false
+        }
+    } elif eq(cmd, "keys") && n >= 2 {
+        set sub = argv[1]
+        if eq(sub, "gen") && n == 3 {
+            cmd_keys_gen(argv[2])
+        } elif eq(sub, "trust") && (n == 4 || n == 5) {
+            set role = "publisher"
+            if n == 5 {
+                rewrite role = argv[4]
+            }
+            cmd_keys_trust(argv[2], argv[3], role, eq(get_or("YUKI_YES", ""), "1"))
+        } elif eq(sub, "untrust") && n == 3 {
+            cmd_keys_untrust(argv[2])
+        } elif eq(sub, "list") && n == 2 {
+            cmd_keys_list()
+        } elif eq(sub, "export") && n == 3 {
+            cmd_keys_export(argv[2])
+        } elif eq(sub, "sign") && n == 4 {
+            cmd_keys_sign(argv[2], argv[3])
+        } elif eq(sub, "refresh") && n == 2 {
+            cmd_keys_refresh()
+        } else {
+            return false
+        }
+    } elif eq(cmd, "theme") && n == 2 {
+        if eq(argv[1], "init") {
+            cmd_theme_init()
+        } elif eq(argv[1], "show") {
+            cmd_theme_show()
+        } elif eq(argv[1], "path") {
+            cmd_theme_path()
+        } else {
+            return false
+        }
+    } elif eq(cmd, "verify") && n == 3 {
+        cmd_verify(argv[1], argv[2])
+    } elif eq(cmd, "verify-sig") && n == 4 {
+        cmd_verify_sig(argv[1], argv[2], argv[3])
+    } elif eq(cmd, "inspect") && n == 2 {
+        cmd_inspect(argv[1])
+    } else {
+        return false
+    }
+    return true
+}
+
+fun run_misc(ref argv: string[]) -> bool {
+    set cmd = argv[0]
+    set n = argv.len()
+    if eq(cmd, "clean") && n <= 2 {
+        cmd_clean(n == 2 && eq(argv[1], "all"))
+    } elif eq(cmd, "explain") && n == 2 {
+        cmd_explain(argv[1])
+    } elif eq(cmd, "completions") && n == 2 {
+        cmd_completions(argv[1])
+    } elif eq(cmd, "help") && n == 2 {
+        cmd_help(argv[1])
+    } elif eq(cmd, "help") && n == 1 {
+        usage()
+    } elif eq(cmd, "selftest") && n == 1 {
+        cmd_selftest()
+    } elif eq(cmd, "version") {
+        println("yuki " + VERSION)
+    } else {
+        return false
+    }
+    return true
+}
+
+fun dispatch(ref argv: string[]) {
+    if eq(get_or("YUKI_HELP", ""), "1") && help_lines(argv[0]).len() > 0 {
+        cmd_help(argv[0])
+        return
+    }
+    if run_system(ref argv) || run_project(ref argv) || run_misc(ref argv) {
+        return
+    }
+    set cmd = argv[0]
+    set h = help_lines(cmd)
+    if h.len() > 0 {
+        diag_error("Y0002", "wrong arguments for `" + cmd + "`", "", "usage: " + h[0] + "\nmore: yuki help " + cmd)
+    } else {
+        set sg = suggest(cmd)
+        set tip = "see `yuki help`"
+        if sg.len() > 0 {
+            rewrite tip = "did you mean `yuki " + sg + "`?"
+        }
+        diag_error("Y0001", "unknown command: " + cmd, "", tip)
+    }
+    exit(2)
+}
+
+fun main() {
+    set raw = args()
+    set translated: string[] = []
+    if raw.len() > 0 && starts_with(raw[0], "-") && !starts_with(raw[0], "--") && !eq(raw[0], "-y") {
+        rewrite translated = translate(ref raw)
+    } else {
+        rewrite translated = raw
+    }
+    set argv = strip_flags(ref translated)
+    if argv.len() > 0 {
+        if is_system_cmd(argv[0]) || (eq(argv[0], "keys") && is_root()) {
+            set_env("YUKI_SYSTEM", "1")
+        }
+    }
+    theme_init()
+    if argv.len() == 0 {
+        usage()
+        exit(0)
+    }
+
+    set tw = theme_warning()
+    if tw.len() > 0 {
+        warn(tw)
+    }
+
+    sus {
+        dispatch(ref argv)
+    } catch e: VerifyError {
+        set code: int32 = 300 + e.code
+        diag_error(code_str(code), e.message, e.path, hint_line(cast(code, "int64")))
+        exit(1)
+    } catch e: YukiError {
+        diag_error(code_str(e.code), e.message, e.path, hint_line(cast(e.code, "int64")))
+        exit(1)
+    } catch e: TarError {
+        diag_error("Y0400", e.message, "", "the archive is damaged or in an unsupported format")
+        exit(1)
+    } catch {
+        diag_error("Y0999", "unexpected failure: " + errkind, "", "run `yuki doctor`")
+        exit(1)
+    }
+}

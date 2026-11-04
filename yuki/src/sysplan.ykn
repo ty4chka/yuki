@@ -1,0 +1,144 @@
+// sysplan.ykn — план установки системных пакетов.
+// Одни и те же функции работают в двух ролях:
+//   * в непривилегированном ребёнке (fetch_missing = true): качает записи индекса;
+//   * в root (fetch_missing = false): заново проверяет те же записи по своим ключам.
+// Дереву зависимостей root верит только после собственной проверки подписей.
+// Корней может быть несколько: `install a b c` и `upgrade` строят один общий план.
+
+load std.fs.files: file_exists, file_read_text, file_write_text
+load std.fs.dirs: dir_create_all
+load std.fs.paths: path_join, path_parent
+load std.env: get_or
+load std.strings: eq, trim, lines, index_of, slice
+load .errors: YukiError, err
+load .config: MAX_INDEX_FILE
+load .index: Release, EntryText, fetch_entry, resolve_text, index_get
+load .sysdb: db_has, db_read
+load .util: dep_name, dep_version
+
+public struct PNode {
+    rel: Release
+    parent: int64
+    action: string
+}
+
+// action: "bin" готовая сборка, "src" сборка из исходников, "installed" уже стоит, "none" нечего ставить
+
+static MAX_DEPTH: int32 = 16
+static MAX_NODES: int64 = 128
+
+public fun spec_name(spec: string) -> string {
+    set at = index_of(spec, "@")
+    if at > 0 {
+        return slice(spec, 0, at)
+    }
+    return spec
+}
+
+public fun spec_ver(spec: string) -> string {
+    set at = index_of(spec, "@")
+    if at > 0 {
+        return slice(spec, at + 1, spec.len())
+    }
+    return ""
+}
+
+// Корни установки лежат в <stage>/roots (пишет root, читает ребёнок).
+public fun read_roots(dl: string) -> string[] {
+    set out: string[] = []
+    set f = path_join(path_parent(dl), "roots")
+    if file_exists(f) {
+        set ls = lines(file_read_text(f))
+        for i in 0..ls.len() {
+            if trim(ls[i]).len() > 0 {
+                out.push(trim(ls[i]))
+            }
+        }
+    }
+    return out
+}
+
+fun entries_dir(dl: string) -> string {
+    return path_join(dl, "entries")
+}
+
+fun load_entry(dl: string, name: string, fetch_missing: bool) -> EntryText {
+    set p = path_join(entries_dir(dl), name + ".json")
+    if file_exists(p) && file_exists(p + ".sig") {
+        return EntryText { text: file_read_text(p), sig: file_read_text(p + ".sig") }
+    }
+    if !fetch_missing {
+        panic(err("index entry for " + name + " was not fetched", 740, name))
+    }
+    set e = fetch_entry(name)
+    dir_create_all(entries_dir(dl))
+    file_write_text(p, e.text)
+    file_write_text(p + ".sig", e.sig)
+    return e
+}
+
+fun visit(dl: string, name: string, want: string, parent: int64, depth: int32, fetch_missing: bool, record: bool, ref ~out: PNode[]) {
+    if depth > MAX_DEPTH {
+        panic(err("dependency chain is too deep", 215, name))
+    }
+    for i in 0..out.len() {
+        if eq(out[i].rel.name, name) {
+            if want.len() > 0 && !eq(out[i].rel.version, want) {
+                panic(err("version conflict for " + name + ": " + out[i].rel.version + " and " + want, 217, name))
+            }
+            return
+        }
+    }
+    if out.len() >= MAX_NODES {
+        panic(err("too many packages in the dependency tree", 216, name))
+    }
+
+    set e = load_entry(dl, name, fetch_missing)
+    set rel = resolve_text(name, want, e.text, e.sig, record)
+    if !eq(rel.kind, "app") {
+        panic(err(name + " is a library, not an application: use `yuki add` inside a project", 741, name))
+    }
+
+    set action = "none"
+    if db_has(name) && eq(db_read(name).version, rel.version) && !(parent < 0 && eq(get_or("YUKI_REINSTALL", ""), "1")) {
+        rewrite action = "installed"
+    } elif rel.bin_url.len() > 0 {
+        rewrite action = "bin"
+    } elif rel.src_url.len() > 0 {
+        rewrite action = "src"
+    }
+
+    set idx = out.len()
+    out.push(PNode { rel: rel, parent: parent, action: action })
+    for k in 0..out[idx].rel.deps.len() {
+        set spec = out[idx].rel.deps[k]
+        visit(dl, dep_name(spec), dep_version(spec), idx, depth + 1, fetch_missing, record, ref ~out)
+    }
+}
+
+// roots — строки "имя" или "имя@версия".
+public fun plan_nodes(dl: string, ref roots: string[], fetch_missing: bool, record: bool) -> PNode[] {
+    set out: PNode[] = []
+    for i in 0..roots.len() {
+        visit(dl, spec_name(roots[i]), spec_ver(roots[i]), -1, 0, fetch_missing, record, ref ~out)
+    }
+    return out
+}
+
+// Шаг ребёнка «plan»: принести и разобрать все записи дерева.
+public fun child_plan(dl: string) {
+    set roots = read_roots(dl)
+    set nodes = plan_nodes(dl, ref roots, true, false)
+}
+
+// Шаг ребёнка «keys»: принести ротацию ключей.
+public fun child_keys(dl: string) {
+    file_write_text(path_join(dl, "rotation.json"), index_get("keys/rotation.json", MAX_INDEX_FILE))
+    file_write_text(path_join(dl, "rotation.sigs"), index_get("keys/rotation.sigs", 65536))
+}
+
+// Шаг ребёнка «catalog»: каталог пакетов для поиска.
+public fun child_catalog(dl: string) {
+    file_write_text(path_join(dl, "catalog.json"), index_get("catalog.json", 4194304))
+    file_write_text(path_join(dl, "catalog.json.sig"), index_get("catalog.json.sig", 4096))
+}

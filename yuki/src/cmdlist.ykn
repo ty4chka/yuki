@@ -1,0 +1,89 @@
+// cmdlist.ykn — список команд: подсказка «did you mean», дополнение в оболочке, справка.
+
+load std.strings: eq, starts_with, str_join
+load .util: edit_distance
+
+public fun all_commands() -> string[] {
+    return ["install", "reinstall", "uninstall", "upgrade", "self-update", "list", "info", "files", "owns", "why", "tree", "check", "sys-audit", "outdated", "hold", "unhold", "history", "rollback", "export", "import", "search", "show", "add", "remove", "fetch", "update", "audit", "keys", "theme", "pack", "publish", "yank", "renew", "index", "verify", "verify-sig", "inspect", "doctor", "config", "clean", "explain", "selftest", "completions", "help", "version"]
+}
+
+// Самая похожая команда или "" (если ничего близкого нет).
+public fun suggest(cmd: string) -> string {
+    set all = all_commands()
+    set best = ""
+    set best_d: int64 = 3
+    for i in 0..all.len() {
+        if starts_with(all[i], cmd) && cmd.len() >= 2 {
+            return all[i]
+        }
+        set d = edit_distance(cmd, all[i])
+        if d < best_d {
+            rewrite best_d = d
+            rewrite best = all[i]
+        }
+    }
+    return best
+}
+
+public fun completion_script(shell: string) -> string {
+    set words = str_join(all_commands(), " ")
+    if eq(shell, "bash") {
+        return "_yuki() { COMPREPLY=( $(compgen -W \"" + words + "\" -- \"$2\") ); }\ncomplete -F _yuki yuki\n"
+    }
+    if eq(shell, "zsh") {
+        return "#compdef yuki\n_arguments '1: :(" + words + ")'\n"
+    }
+    if eq(shell, "fish") {
+        return "complete -c yuki -f -a \"" + words + "\"\n"
+    }
+    return ""
+}
+
+// Подробная справка: [usage, описание, пример, ...]
+public fun help_lines(cmd: string) -> string[] {
+    if eq(cmd, "install") { return ["yuki install <pkg>[@ver]  (sudo)", "Installs an application: a prebuilt binary for your platform, or builds it from source in a sandbox if you agree.", "sudo yuki install ripgrep", "sudo yuki install ripgrep@14.1.0 --yes", "flags: --yes (skip the plan prompt), --allow-build (accept source builds), --overwrite"] }
+    if eq(cmd, "reinstall") { return ["yuki reinstall <pkg>  (sudo)", "Installs the same version again: repairs modified or missing files.", "sudo yuki reinstall ripgrep"] }
+    if eq(cmd, "uninstall") { return ["yuki uninstall <pkg>  (sudo)", "Removes a package with a rollback journal. Refuses if another package needs it (use --force).", "sudo yuki uninstall ripgrep"] }
+    if eq(cmd, "upgrade") { return ["yuki upgrade [pkg]  (sudo)", "Shows old → new versions, asks once, then upgrades. Held packages are skipped.", "sudo yuki upgrade", "sudo yuki upgrade ripgrep"] }
+    if eq(cmd, "self-update") { return ["yuki self-update  (sudo)", "Upgrades yuki itself. The new binary must start, otherwise the upgrade is rolled back.", "sudo yuki self-update"] }
+    if eq(cmd, "list") { return ["yuki list", "Lists installed packages with version and origin (binary or source)."] }
+    if eq(cmd, "info") { return ["yuki info <pkg>", "Shows details of an installed package: checksum, signer, dependencies, file count."] }
+    if eq(cmd, "files") { return ["yuki files <pkg>", "Prints every file the package installed."] }
+    if eq(cmd, "owns") { return ["yuki owns <path>", "Tells which package owns a file.", "yuki owns /usr/bin/rg"] }
+    if eq(cmd, "why") { return ["yuki why <pkg>", "Explains why a package is installed: who depends on it, or that it was installed explicitly."] }
+    if eq(cmd, "tree") { return ["yuki tree <pkg>", "Prints the dependency tree of an installed package."] }
+    if eq(cmd, "check") { return ["yuki check [pkg]", "Compares files on disk with the database. Reports missing and modified files.", "yuki check ripgrep"] }
+    if eq(cmd, "sys-audit") { return ["yuki sys-audit  (sudo)", "Finds installed versions that were withdrawn (yanked) from the signed index."] }
+    if eq(cmd, "outdated") { return ["yuki outdated", "Lists installed packages that have a newer signed release. Does not change anything."] }
+    if eq(cmd, "hold") { return ["yuki hold <pkg>  (sudo)", "Keeps a package at its current version: upgrade skips it. `yuki hold` alone lists held packages.", "sudo yuki hold ripgrep"] }
+    if eq(cmd, "unhold") { return ["yuki unhold <pkg>  (sudo)", "Lets upgrade touch the package again."] }
+    if eq(cmd, "history") { return ["yuki history", "Prints the transaction log (installs, removals, rollbacks)."] }
+    if eq(cmd, "rollback") { return ["yuki rollback [id]  (sudo)", "Undoes a transaction from its journal: files, directories and database. Without an id it takes the last one.", "sudo yuki rollback"] }
+    if eq(cmd, "export") { return ["yuki export", "Prints explicitly installed packages as name@version lines.", "yuki export > packages.txt"] }
+    if eq(cmd, "import") { return ["yuki import <file>  (sudo)", "Installs every package listed in a file made by `yuki export`.", "sudo yuki import packages.txt --yes"] }
+    if eq(cmd, "search") { return ["yuki search <word>", "Searches the signed catalog by name and summary.", "yuki search grep"] }
+    if eq(cmd, "show") { return ["yuki show <pkg>[@ver]", "Shows what the index offers: version, kind, dependencies, whether a binary exists for your platform.", "yuki show ripgrep"] }
+    if eq(cmd, "add") { return ["yuki add <lib>[@ver]", "Adds a library and its dependency tree to [libs.runtime] in yuki.toml, verified and hash-pinned.", "yuki add json-yukino"] }
+    if eq(cmd, "remove") { return ["yuki remove <lib>", "Removes a library from yuki.toml and lists dependencies that came with it."] }
+    if eq(cmd, "fetch") { return ["yuki fetch", "Re-downloads and re-verifies every library in yuki.toml."] }
+    if eq(cmd, "update") { return ["yuki update [lib]", "Moves libraries to newer signed releases and rewrites their dependency lines."] }
+    if eq(cmd, "audit") { return ["yuki audit", "Compares yuki.toml with the signed index: hash changes, withdrawn versions."] }
+    if eq(cmd, "keys") { return ["yuki keys gen|trust|untrust|list|export|sign|refresh", "Manages signing keys and the keys you trust.", "yuki keys gen main", "sudo yuki keys trust main <pubkey>", "yuki keys sign main rotation.json   (prints a line for rotation.sigs)", "sudo yuki keys refresh   (applies signed rotation and revocation)"] }
+    if eq(cmd, "theme") { return ["yuki theme init|show|path", "Creates, previews and locates theme.toml (colors, symbols, animation)."] }
+    if eq(cmd, "pack") { return ["yuki pack <name> <dir> <out.tar.zst>", "Builds a package archive from a directory (usr/bin/..., etc/...), checks it against the install policy and prints the blake3 and a ready index snippet.", "yuki pack ripgrep ./pkgroot ripgrep-14.1.0-linux-x86_64.tar.zst"] }
+    if eq(cmd, "publish") { return ["yuki publish <lib> <ver> <url> <key> [dep@ver ...]", "Maintainer: adds a library release to the index checkout and signs it."] }
+    if eq(cmd, "yank") { return ["yuki yank <name> <ver> <key>", "Maintainer: withdraws a release; clients flag it in `audit` and `sys-audit`."] }
+    if eq(cmd, "renew") { return ["yuki renew <name> <key>", "Maintainer: extends the validity of an entry by 90 days and re-signs it."] }
+    if eq(cmd, "index") { return ["yuki index add <release.json> <key> | cosign <pkg> <key> | check [download] | catalog <key> | renew-all <key> [days]", "Maintainer tools for the index repository. `check` is what CI runs on every pull request.", "yuki index add ripgrep.release.json main", "YUKI_CONFIG_DIR=ci yuki index check download"] }
+    if eq(cmd, "verify") { return ["yuki verify <file> <blake3:hex>", "Checks a file against a blake3 checksum."] }
+    if eq(cmd, "verify-sig") { return ["yuki verify-sig <pubkey> <file> <sig-file>", "Checks an Ed25519 signature (hex) made with the yuki-v1 domain."] }
+    if eq(cmd, "inspect") { return ["yuki inspect <archive>", "Audits an archive without unpacking it."] }
+    if eq(cmd, "doctor") { return ["yuki doctor", "Checks your setup: index, keys, sandbox, terminal, permissions, clock. Every problem comes with a fix."] }
+    if eq(cmd, "config") { return ["yuki config", "Prints the effective configuration: directories, index URL, platform, threshold, sandbox."] }
+    if eq(cmd, "clean") { return ["yuki clean [all]", "Deletes partial downloads. `all` also empties the cache."] }
+    if eq(cmd, "explain") { return ["yuki explain <code>", "Explains an error code in detail: why it happens and how to fix it.", "yuki explain Y0301"] }
+    if eq(cmd, "completions") { return ["yuki completions bash|zsh|fish", "Prints a shell completion script.", "yuki completions bash | sudo tee /etc/bash_completion.d/yuki"] }
+    if eq(cmd, "selftest") { return ["yuki selftest", "Checks this build against known values: BLAKE3, Ed25519, path policy, JSON stability, files and threads. Run it right after building."] }
+    if eq(cmd, "version") { return ["yuki version", "Prints the version."] }
+    return []
+}

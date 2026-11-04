@@ -1,0 +1,397 @@
+// theme.ykn — одна тема yuki, которую можно настроить под любой терминал.
+//
+// Что подстраивается само:
+//   * цвет: truecolor → 256 цветов → 16 цветов → без цвета (NO_COLOR, не-TTY);
+//   * символы: ✔ ◐ ├─ █ на UTF-8 терминалах, ASCII-замены в остальных (TERM=dumb/linux, не UTF-8);
+//   * анимация: только в живом терминале, не в CI и не в пайпе.
+//
+// Что настраивает пользователь — файл <config>/theme.toml (или YUKI_THEME_FILE):
+//   palette = "rgb" | "ansi" | "mono"   "ansi" берёт цвета самого терминала, «mono» — без цветов
+//   [colors]  accent good warn bad logo dim speed
+//             "#rrggbb" | "256:N" | "ansi:red" | "dim" | "none", плюс "+bold" / "+dim"
+//   [symbols] ok fail warn info pending active branch last pipe rule arrow dot
+//             tl tr bl br bar_full bar_head bar_empty spinner  ("spinner" — кадры через пробел)
+//   [style]   unicode = true|false, animation = true|false, bar_gradient = true|false
+//
+// В Yukino нет изменяемых глобальных переменных, поэтому готовая тема хранится в
+// переменных окружения процесса (YUKI_T_*, YUKI_S_*): theme_init() кладёт их один раз.
+
+load std.io: is_stdout_terminal
+load std.env: get_or, set_env, has_env
+load std.outf: Styled, style, supports_truecolor
+load std.strings: split, eq, lower, contains, starts_with, slice, parse_int, index_of, str_join
+load std.toml: parse, validate
+load std.fs.files: file_exists, file_read_text, file_write_text
+load std.fs.dirs: dir_create_all
+load std.fs.paths: path_join
+load .config: config_dir
+load .util: is_hex
+
+public fun theme_path() -> string {
+    set p = get_or("YUKI_THEME_FILE", "")
+    if p.len() > 0 {
+        return p
+    }
+    return path_join(config_dir(), "theme.toml")
+}
+
+// ── значения по умолчанию ───────────────────────────────────────────────
+
+fun default_color(palette: string, role: string) -> string {
+    if eq(palette, "ansi") {
+        if eq(role, "accent") { return "ansi:cyan" }
+        if eq(role, "good") { return "ansi:green" }
+        if eq(role, "warn") { return "ansi:yellow" }
+        if eq(role, "bad") { return "ansi:red+bold" }
+        if eq(role, "logo") { return "ansi:magenta+bold" }
+        if eq(role, "speed") { return "ansi:bright_cyan" }
+        return "dim"
+    }
+    if eq(palette, "mono") {
+        if eq(role, "bad") || eq(role, "logo") {
+            return "none+bold"
+        }
+        if eq(role, "dim") {
+            return "dim"
+        }
+        return "none"
+    }
+    if eq(role, "accent") { return "#89b4fa" }
+    if eq(role, "good") { return "#a6e3a1" }
+    if eq(role, "warn") { return "#f9e2af" }
+    if eq(role, "bad") { return "#f38ba8+bold" }
+    if eq(role, "logo") { return "#cba6f7+bold" }
+    if eq(role, "speed") { return "#94e2d5" }
+    return "dim"
+}
+
+fun default_symbol(uni: bool, name: string) -> string {
+    if uni {
+        if eq(name, "ok") { return "✔" }
+        if eq(name, "fail") { return "✘" }
+        if eq(name, "warn") { return "⚠" }
+        if eq(name, "info") { return "•" }
+        if eq(name, "pending") { return "○" }
+        if eq(name, "active") { return "◐" }
+        if eq(name, "branch") { return "├─" }
+        if eq(name, "last") { return "└─" }
+        if eq(name, "pipe") { return "│" }
+        if eq(name, "rule") { return "─" }
+        if eq(name, "arrow") { return "→" }
+        if eq(name, "dot") { return "·" }
+        if eq(name, "tl") { return "╭" }
+        if eq(name, "tr") { return "╮" }
+        if eq(name, "bl") { return "╰" }
+        if eq(name, "br") { return "╯" }
+        if eq(name, "bar_full") { return "█" }
+        if eq(name, "bar_head") { return "▌" }
+        if eq(name, "bar_empty") { return "░" }
+        if eq(name, "spinner") { return "◐ ◓ ◑ ◒" }
+        return "?"
+    }
+    if eq(name, "ok") { return "+" }
+    if eq(name, "fail") { return "x" }
+    if eq(name, "warn") { return "!" }
+    if eq(name, "info") { return "*" }
+    if eq(name, "pending") { return "o" }
+    if eq(name, "active") { return "~" }
+    if eq(name, "branch") { return "|-" }
+    if eq(name, "last") { return "\\-" }
+    if eq(name, "pipe") { return "|" }
+    if eq(name, "rule") { return "-" }
+    if eq(name, "arrow") { return "->" }
+    if eq(name, "dot") { return "-" }
+    if eq(name, "tl") || eq(name, "tr") || eq(name, "bl") || eq(name, "br") { return "+" }
+    if eq(name, "bar_full") { return "#" }
+    if eq(name, "bar_head") { return ">" }
+    if eq(name, "bar_empty") { return "-" }
+    if eq(name, "spinner") { return "| / - \\" }
+    return "?"
+}
+
+fun detect_unicode() -> bool {
+    if has_env("YUKI_ASCII") {
+        return false
+    }
+    set term = get_or("TERM", "")
+    if eq(term, "dumb") || eq(term, "linux") {
+        return false
+    }
+    if has_env("WT_SESSION") {
+        return true
+    }
+    set loc = lower(get_or("LC_ALL", "") + " " + get_or("LC_CTYPE", "") + " " + get_or("LANG", ""))
+    return contains(loc, "utf-8") || contains(loc, "utf8")
+}
+
+// ── загрузка ────────────────────────────────────────────────────────────
+
+public fun theme_init() {
+    if has_env("YUKI_THEME_READY") {
+        return
+    }
+    set src = ""
+    set warning = ""
+    set path = theme_path()
+    if file_exists(path) {
+        set text = file_read_text(path)
+        if validate(text) {
+            rewrite src = text
+        } else {
+            rewrite warning = "theme file is not valid TOML, using the defaults: " + path
+        }
+    }
+    set doc = parse(src)
+
+    set palette = lower(doc.get("palette").as_string_or("rgb"))
+    set from_env = lower(get_or("YUKI_PALETTE", ""))
+    if from_env.len() > 0 {
+        rewrite palette = from_env
+    }
+    if !eq(palette, "ansi") && !eq(palette, "mono") {
+        rewrite palette = "rgb"
+    }
+
+    set roles = ["accent", "good", "warn", "bad", "logo", "dim", "speed"]
+    for i in 0..roles.len() {
+        set spec = doc.get("colors").get(roles[i]).as_string_or(default_color(palette, roles[i]))
+        set_env("YUKI_T_" + roles[i], spec)
+    }
+
+    set uni = detect_unicode()
+    set uv = doc.get("style").get("unicode")
+    if uv.is_bool() && !has_env("YUKI_ASCII") {
+        rewrite uni = uv.as_bool()
+    }
+    set names = ["ok", "fail", "warn", "info", "pending", "active", "branch", "last", "pipe", "rule", "arrow", "dot", "tl", "tr", "bl", "br", "bar_full", "bar_head", "bar_empty", "spinner"]
+    for i in 0..names.len() {
+        set s = doc.get("symbols").get(names[i]).as_string_or(default_symbol(uni, names[i]))
+        set_env("YUKI_S_" + names[i], s)
+    }
+
+    set anim = is_stdout_terminal() && !eq(get_or("TERM", ""), "dumb") && !has_env("CI")
+    set av = doc.get("style").get("animation")
+    if av.is_bool() {
+        rewrite anim = av.as_bool() && is_stdout_terminal()
+    }
+    if anim {
+        set_env("YUKI_ANIM", "1")
+    } else {
+        set_env("YUKI_ANIM", "0")
+    }
+    if doc.get("style").get("bar_gradient").as_bool_or(true) {
+        set_env("YUKI_GRAD", "1")
+    } else {
+        set_env("YUKI_GRAD", "0")
+    }
+    set_env("YUKI_T_WARN", warning)
+    set_env("YUKI_T_PALETTE", palette)
+    set_env("YUKI_THEME_READY", "1")
+}
+
+public fun theme_warning() -> string {
+    return get_or("YUKI_T_WARN", "")
+}
+
+public fun theme_palette() -> string {
+    return get_or("YUKI_T_PALETTE", "rgb")
+}
+
+public fun animation_on() -> bool {
+    return eq(get_or("YUKI_ANIM", "0"), "1")
+}
+
+public fun sym(name: string) -> string {
+    return get_or("YUKI_S_" + name, "?")
+}
+
+public fun spinner_frames() -> string[] {
+    return split(sym("spinner"), " ")
+}
+
+// ── раскраска ───────────────────────────────────────────────────────────
+
+fun hexval(ch: string) -> int32 {
+    set i = index_of("0123456789abcdef", lower(ch))
+    if i < 0 {
+        return 0
+    }
+    return cast(i, "int32")
+}
+
+fun hex2(s: string, at: int64) -> int32 {
+    return hexval(slice(s, at, at + 1)) * 16 + hexval(slice(s, at + 1, at + 2))
+}
+
+fun to_cube(v: int32) -> int32 {
+    if v < 48 {
+        return 0
+    }
+    if v < 115 {
+        return 1
+    }
+    return (v - 35) / 40
+}
+
+// ближайший цвет из куба 6x6x6 для терминалов без truecolor
+fun rgb256(r: int32, g: int32, b: int32) -> int32 {
+    return 16 + 36 * to_cube(r) + 6 * to_cube(g) + to_cube(b)
+}
+
+fun ansi(st: Styled, name: string) -> Styled {
+    if eq(name, "black") { return st.black() }
+    if eq(name, "red") { return st.red() }
+    if eq(name, "green") { return st.green() }
+    if eq(name, "yellow") { return st.yellow() }
+    if eq(name, "blue") { return st.blue() }
+    if eq(name, "magenta") { return st.magenta() }
+    if eq(name, "cyan") { return st.cyan() }
+    if eq(name, "white") { return st.white() }
+    if eq(name, "gray") || eq(name, "bright_black") { return st.bright_black() }
+    if eq(name, "bright_red") { return st.bright_red() }
+    if eq(name, "bright_green") { return st.bright_green() }
+    if eq(name, "bright_yellow") { return st.bright_yellow() }
+    if eq(name, "bright_blue") { return st.bright_blue() }
+    if eq(name, "bright_magenta") { return st.bright_magenta() }
+    if eq(name, "bright_cyan") { return st.bright_cyan() }
+    if eq(name, "bright_white") { return st.bright_white() }
+    return st
+}
+
+fun is_hex_color(base: string) -> bool {
+    return starts_with(base, "#") && base.len() == 7 && is_hex(slice(base, 1, 7))
+}
+
+fun colorize(st: Styled, base: string) -> Styled {
+    if is_hex_color(base) {
+        set r = hex2(base, 1)
+        set g = hex2(base, 3)
+        set b = hex2(base, 5)
+        if supports_truecolor() {
+            return st.rgb(r, g, b)
+        }
+        return st.color256(rgb256(r, g, b))
+    }
+    if starts_with(base, "256:") {
+        set n = parse_int(slice(base, 4, base.len())) ?? -1
+        if n >= 0 && n <= 255 {
+            return st.color256(cast(n, "int32"))
+        }
+        return st
+    }
+    if starts_with(base, "ansi:") {
+        return ansi(st, slice(base, 5, base.len()))
+    }
+    return st
+}
+
+fun attrs(st: Styled, bold: bool, dimf: bool) -> Styled {
+    if bold && dimf {
+        return st.bold().dim()
+    }
+    if bold {
+        return st.bold()
+    }
+    if dimf {
+        return st.dim()
+    }
+    return st
+}
+
+fun apply_spec(spec: string, text: string) -> string {
+    if spec.len() == 0 {
+        return text
+    }
+    set parts = split(spec, "+")
+    set base = parts[0]
+    set bold = false
+    set dimf = eq(base, "dim")
+    for i in 1..parts.len() {
+        if eq(parts[i], "bold") {
+            rewrite bold = true
+        }
+        if eq(parts[i], "dim") {
+            rewrite dimf = true
+        }
+    }
+    return attrs(colorize(style(text), base), bold, dimf).to_string()
+}
+
+public fun paint(role: string, text: string) -> string {
+    return apply_spec(get_or("YUKI_T_" + role, ""), text)
+}
+
+fun base_of(spec: string) -> string {
+    return split(spec, "+")[0]
+}
+
+// Цвет i-й ячейки полосы: плавный переход accent → good, если оба заданы как #rrggbb
+// и терминал умеет truecolor; иначе один цвет "good".
+public fun grad(text: string, i: int64, n: int64) -> string {
+    if !eq(get_or("YUKI_GRAD", "1"), "1") || !supports_truecolor() || n < 2 {
+        return paint("good", text)
+    }
+    set a = base_of(get_or("YUKI_T_accent", ""))
+    set b = base_of(get_or("YUKI_T_good", ""))
+    if !is_hex_color(a) || !is_hex_color(b) {
+        return paint("good", text)
+    }
+    set ar = hex2(a, 1)
+    set ag = hex2(a, 3)
+    set ab = hex2(a, 5)
+    set br = hex2(b, 1)
+    set bg = hex2(b, 3)
+    set bb = hex2(b, 5)
+    set k = cast(i, "int32")
+    set d = cast(n - 1, "int32")
+    return style(text).rgb(ar + (br - ar) * k / d, ag + (bg - ag) * k / d, ab + (bb - ab) * k / d).to_string()
+}
+
+// ── theme.toml по умолчанию ─────────────────────────────────────────────
+
+public fun theme_template() -> string {
+    set l = [
+        "# yuki theme. Everything here is optional: delete a line to get the default.",
+        "# Put this file at <config>/theme.toml or point YUKI_THEME_FILE to it.",
+        "",
+        "# \"rgb\"  - exact colors below (falls back to 256/16 colors by itself)",
+        "# \"ansi\" - use the colors of your terminal theme, nothing is hardcoded",
+        "# \"mono\" - no colors, only bold and dim",
+        "palette = \"rgb\"",
+        "",
+        "# \"#rrggbb\", \"256:N\", \"ansi:red\", \"ansi:bright_blue\", \"dim\" or \"none\".",
+        "# Add +bold or +dim for attributes, for example \"#f38ba8+bold\".",
+        "[colors]",
+        "accent = \"#89b4fa\"",
+        "good   = \"#a6e3a1\"",
+        "warn   = \"#f9e2af\"",
+        "bad    = \"#f38ba8+bold\"",
+        "logo   = \"#cba6f7+bold\"",
+        "dim    = \"dim\"",
+        "speed  = \"#94e2d5\"",
+        "",
+        "# Detected from your environment; uncomment to force.",
+        "[style]",
+        "# unicode = true",
+        "# animation = true",
+        "# bar_gradient = true",
+        "",
+        "# Any symbol can be replaced. \"spinner\" holds frames separated by spaces.",
+        "[symbols]",
+        "# ok = \"✔\"",
+        "# fail = \"✘\"",
+        "# spinner = \"◐ ◓ ◑ ◒\"",
+        "# bar_full = \"█\""
+    ]
+    return str_join(l, "\n") + "\n"
+}
+
+public fun theme_write_template() -> string {
+    set path = theme_path()
+    if file_exists(path) {
+        return ""
+    }
+    dir_create_all(config_dir())
+    file_write_text(path, theme_template())
+    return path
+}

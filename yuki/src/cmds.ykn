@@ -1,0 +1,441 @@
+// cmds.ykn — команды yuki.
+
+load std.io: println
+load std.json: JsonValue, json_parse, json_object, json_array, json_string, json_int, json_bool, json_pretty
+load std.fs.paths: path_join
+load std.fs.dirs: dir_create_all, dir_exists, dir_remove_all
+load std.fs.files: file_exists, file_read_text, file_write_text
+load std.strings: eq, trim, index_of, slice, pad_end, split
+load std.stdotool.format: format_bytes
+load .errors: YukiError, err
+load .config: config_dir, cache_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
+load .ui: ok, info, warn, bad, step, kv, card, done, rule, c_accent, c_dim, c_good, c_warn, c_bad, c_speed, c_bold, render_bar
+load .theme: sym, paint, theme_path, theme_palette, theme_write_template, animation_on
+load .util: valid_name, valid_version, ver_cmp, now_secs, now_ms, valid_dep_spec
+load .verify: VerifyError, AuditReport, check_blake3, verify_signature, audit_tar
+load .index: Release, resolve, entry_rel, entry_dir
+load .manifest: Dep, dep_line, upsert_dep, remove_dep, list_deps, merge_via, prune_owner, via_of
+load .pipeline: fetch_unpinned
+load .pool: pool_prepare, pool_add, pool_run, pool_raise, pool_bytes, jobs_limit
+load .resolver: Node, resolve_tree
+load .view: InstallView
+load .indexadmin: write_entry
+load .trust: trusted_keys, trusted_names, fingerprint, trust_add, trust_remove, keygen, pubkey_of, sign_text
+
+// ── низкоуровневые проверки ─────────────────────────────────────────────
+
+public fun cmd_verify(file: string, expected: string) {
+    step(1, 1, "blake3 " + c_accent(file))
+    check_blake3(file, expected)
+    ok("hash matches")
+}
+
+public fun cmd_verify_sig(pubkey: string, file: string, sig_file: string) {
+    step(1, 1, "ed25519 " + c_accent(file))
+    set sig_hex = trim(file_read_text(sig_file))
+    if verify_signature(pubkey, file, sig_hex) {
+        ok("signature is valid")
+    } else {
+        panic(VerifyError {
+            message: "signature is not valid for this key",
+            code: 3,
+            path: file,
+        })
+    }
+}
+
+public fun cmd_inspect(archive: string) {
+    step(1, 1, "inspecting " + c_accent(archive))
+    set rep = audit_tar(archive, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, false)
+    ok("archive is safe to unpack")
+    kv("entries", cast(rep.entries, "string"))
+    kv("unpacked", format_bytes(rep.total_bytes))
+}
+
+// ── зависимости ─────────────────────────────────────────────────────────
+
+// Скачать и проверить все архивы параллельно. nidx[i] — узел панели для i-й задачи.
+// Возвращает суммарный размер.
+fun fetch_many(ref urls: string[], ref sums: string[], ref labels: string[], ref nidx: int64[], ref ~view: InstallView) -> int64 {
+    set dir = path_join(cache_dir(), "pool-" + cast(now_ms(), "string"))
+    pool_prepare(dir)
+    for i in 0..urls.len() {
+        pool_add(dir, i, "cache", urls[i], sums[i], "", labels[i])
+    }
+    pool_run(dir, urls.len(), jobs_limit(), ref nidx, ref ~view)
+    set total: int64 = 0
+    sus {
+        pool_raise(dir, urls.len(), labels)
+        for i in 0..urls.len() {
+            rewrite total += pool_bytes(dir, i)
+        }
+    } catch e: YukiError {
+        dir_remove_all(dir)
+        panic(e)
+    }
+    dir_remove_all(dir)
+    return total
+}
+
+// Разрешить дерево, скачать и проверить каждый пакет (параллельно), записать всё в yuki.toml.
+// Общая часть для `add` и `update`.
+fun install_tree(name: string, want: string, verb: string) {
+    set t0 = now_ms()
+    set view = init InstallView(verb + " " + c_accent(name), animation_on())
+    set nodes = resolve_tree(name, want, ref ~view)
+    view.set_phase(1, cast(nodes.len(), "string") + " packages " + c_dim(sym("dot") + " signed by " + nodes[0].signer))
+
+    set urls: string[] = []
+    set sums: string[] = []
+    set labels: string[] = []
+    set nidx: int64[] = []
+    for i in 0..nodes.len() {
+        urls.push(nodes[i].url)
+        sums.push(nodes[i].checksum)
+        labels.push(nodes[i].name)
+        nidx.push(i)
+    }
+    set total_bytes = fetch_many(ref urls, ref sums, ref labels, ref nidx, ref ~view)
+    view.set_phase(2, "verified " + c_dim(format_bytes(total_bytes) + ", blake3 + audit, " + cast(jobs_limit(), "string") + " in parallel"))
+
+    // у корня сначала снимаем прежнее поддерево (то, что нужно только ему), затем записываем новое
+    prune_owner(nodes[0].name)
+    for i in 0..nodes.len() {
+        set via = ""
+        if nodes[i].parent >= 0 {
+            rewrite via = merge_via(via_of(nodes[i].name), nodes[nodes[i].parent].name)
+        } else {
+            rewrite via = via_of(nodes[i].name)
+        }
+        upsert_dep(nodes[i].name, dep_line(nodes[i].name, nodes[i].url, nodes[i].checksum, nodes[i].version, via))
+    }
+    view.set_phase(3, "added to " + c_accent("[libs.runtime]"))
+    view.finish()
+
+    println("")
+    set rows: string[] = []
+    rows.push(c_good("+") + " " + c_bold(nodes[0].name) + " " + c_good(nodes[0].version) + c_dim("  +" + cast(nodes.len() - 1, "string") + " deps"))
+    rows.push(c_dim(nodes[0].checksum))
+    rows.push(c_dim("signed by ") + c_accent(nodes[0].signer))
+    card(ref rows)
+    done(now_ms() - t0, "run `yukino build`")
+}
+
+public fun cmd_add(spec: string) {
+    set at = index_of(spec, "@")
+    set name = spec
+    set want = ""
+    if at >= 0 {
+        rewrite name = slice(spec, 0, at)
+        rewrite want = slice(spec, at + 1, spec.len())
+    }
+    if want.len() > 0 && !valid_version(want) {
+        panic(err("version must look like 1.2.3", 210, want))
+    }
+    install_tree(name, want, "add")
+}
+
+public fun cmd_remove(name: string) {
+    if remove_dep(name) {
+        ok("removed " + name + " from [libs.runtime]")
+        set gone = prune_owner(name)
+        if gone > 0 {
+            ok("also removed " + cast(gone, "string") + " dependenc" + "ies that nothing else needs")
+        }
+    } else {
+        warn(name + " is not managed by yuki in this project")
+    }
+}
+
+public fun cmd_install() {
+    set t0 = now_ms()
+    set deps = list_deps()
+    if deps.len() == 0 {
+        info("no dependencies managed by yuki")
+        return
+    }
+    set view = init InstallView("fetch", animation_on())
+    set urls: string[] = []
+    set sums: string[] = []
+    set labels: string[] = []
+    set nidx: int64[] = []
+    for i in 0..deps.len() {
+        set parent: int64 = -1
+        set owners = split(deps[i].via, ",")
+        for j in 0..deps.len() {
+            if owners.len() > 0 && owners[0].len() > 0 && eq(deps[j].name, owners[0]) {
+                rewrite parent = j
+            }
+        }
+        view.add_node(deps[i].name, deps[i].version, parent)
+        urls.push(deps[i].url)
+        sums.push(deps[i].checksum)
+        labels.push(deps[i].name)
+        nidx.push(i)
+    }
+    view.set_phase(1, cast(deps.len(), "string") + " packages " + c_dim(sym("dot") + " from yuki.toml"))
+    set total_bytes = fetch_many(ref urls, ref sums, ref labels, ref nidx, ref ~view)
+    view.set_phase(2, "verified " + c_dim(format_bytes(total_bytes) + ", blake3 + audit"))
+    view.set_phase(3, "yuki.toml is up to date")
+    view.finish()
+    println("")
+    done(now_ms() - t0, "")
+}
+
+public fun cmd_update(only: string) {
+    set deps = list_deps()
+    if deps.len() == 0 {
+        info("no dependencies managed by yuki")
+        return
+    }
+    set changed: int64 = 0
+    for i in 0..deps.len() {
+        set dn = deps[i].name
+        if deps[i].via.len() > 0 {
+            continue
+        }
+        if only.len() > 0 && !eq(only, dn) {
+            continue
+        }
+        if !valid_version(deps[i].version) {
+            warn(dn + ": version in yuki.toml is malformed, skipping")
+            continue
+        }
+        set rel = resolve(dn, "")
+        set c = ver_cmp(rel.version, deps[i].version)
+        if c == 0 {
+            if !eq(rel.checksum, deps[i].checksum) {
+                panic(err(dn + " " + rel.version + " changed content without a version bump", 207, dn))
+            }
+            ok(dn + " " + rel.version + " is up to date")
+        } elif c > 0 {
+            install_tree(dn, "", "update")
+            rewrite changed += 1
+        } else {
+            warn(dn + ": the index only offers " + rel.version + ", older than " + deps[i].version)
+        }
+    }
+    info(cast(changed, "string") + " updated")
+}
+
+// Сверка manifest с подписанным индексом: смена хеша, снятые (yanked) релизы.
+public fun cmd_audit() {
+    set deps = list_deps()
+    if deps.len() == 0 {
+        info("no dependencies managed by yuki")
+        return
+    }
+    set problems: int64 = 0
+    for i in 0..deps.len() {
+        set dn = deps[i].name
+        set dv = deps[i].version
+        sus {
+            set rel = resolve(dn, dv)
+            if eq(rel.checksum, deps[i].checksum) {
+                ok(dn + " " + dv + " " + c_dim("matches the signed index"))
+            } else {
+                bad(dn + " " + dv + ": checksum differs from the signed index")
+                rewrite problems += 1
+            }
+        } catch e: YukiError {
+            bad(dn + " " + dv + ": " + e.message)
+            rewrite problems += 1
+        } catch e: VerifyError {
+            bad(dn + " " + dv + ": " + e.message)
+            rewrite problems += 1
+        } catch {
+            bad(dn + " " + dv + ": " + errkind)
+            rewrite problems += 1
+        }
+    }
+    if problems > 0 {
+        panic(err(cast(problems, "string") + " problem(s) found, see above", 213, "yuki.toml"))
+    }
+    ok("all " + cast(deps.len(), "string") + " dependencies match the index")
+}
+
+// ── мейнтейнер индекса: publish / yank / renew ──────────────────────────
+// Выполняются в клоне репозитория индекса; результат коммитится через PR.
+
+fun finish_entry(name: string, seq: int64, versions: JsonValue, keyname: string) {
+    write_entry(name, seq, versions, keyname, "", "", "", "", false)
+}
+
+fun need_index_checkout() {
+    if !dir_exists("index") {
+        panic(err("run this inside a checkout of the index repository (no ./index directory)", 211, "index"))
+    }
+}
+
+public fun cmd_publish(name: string, version: string, url: string, keyname: string, ref deps: string[]) {
+    if !valid_name(name) {
+        panic(err("invalid package name: " + name, 201, name))
+    }
+    if !valid_version(version) {
+        panic(err("version must look like 1.2.3", 210, version))
+    }
+    need_index_checkout()
+    for i in 0..deps.len() {
+        if !valid_dep_spec(deps[i]) {
+            panic(err("dependency must look like name@1.2.3: " + deps[i], 214, deps[i]))
+        }
+    }
+
+    step(1, 3, "fetching and auditing the archive")
+    set checksum = fetch_unpinned(url)
+    ok("archive is safe " + c_dim(checksum))
+
+    step(2, 3, "adding release " + c_accent(name + " " + version))
+    set rel = entry_rel(name)
+    set seq: int64 = 1
+    set versions = json_array([])
+    if file_exists(rel) {
+        set old = json_parse(file_read_text(rel))
+        rewrite seq = old.get("seq").as_int() + 1
+        set ov = old.get("versions")
+        for i in 0..ov.len() {
+            if eq(ov.at(i).get("version").as_string(), version) {
+                panic(err("version " + version + " already exists: published releases are immutable", 212, rel))
+            }
+            versions.push(ov.at(i).cp())
+        }
+    }
+    set item = json_object()
+    item.set("version", json_string(version))
+    item.set("url", json_string(url))
+    item.set("checksum", json_string(checksum))
+    item.set("yanked", json_bool(false))
+    if deps.len() > 0 {
+        set dl = json_array([])
+        for i in 0..deps.len() {
+            dl.push(json_string(deps[i]))
+        }
+        item.set("deps", dl)
+    }
+    versions.push(item)
+
+    step(3, 3, "signing with " + c_accent(keyname))
+    finish_entry(name, seq, versions, keyname)
+    info("next: git add index && git commit -S && open a pull request")
+}
+
+public fun cmd_yank(name: string, version: string, keyname: string) {
+    need_index_checkout()
+    set rel = entry_rel(name)
+    if !valid_name(name) || !file_exists(rel) {
+        panic(err("no such package in this index checkout: " + name, 201, rel))
+    }
+    set old = json_parse(file_read_text(rel))
+    set versions = json_array([])
+    set hit = false
+    set ov = old.get("versions")
+    for i in 0..ov.len() {
+        set copy = ov.at(i).cp()
+        if eq(copy.get("version").as_string(), version) {
+            copy.set("yanked", json_bool(true))
+            rewrite hit = true
+        }
+        versions.push(copy)
+    }
+    if !hit {
+        panic(err("version not found: " + version, 206, rel))
+    }
+    finish_entry(name, old.get("seq").as_int() + 1, versions, keyname)
+    info("yanked " + version + ": `yuki audit` will flag it for everyone who uses it")
+}
+
+// Продлить срок действия записи (expires) — запускать по расписанию в CI.
+public fun cmd_renew(name: string, keyname: string) {
+    need_index_checkout()
+    set rel = entry_rel(name)
+    if !valid_name(name) || !file_exists(rel) {
+        panic(err("no such package in this index checkout: " + name, 201, rel))
+    }
+    set old = json_parse(file_read_text(rel))
+    set versions = json_array([])
+    set ov = old.get("versions")
+    for i in 0..ov.len() {
+        versions.push(ov.at(i).cp())
+    }
+    write_entry(name, old.get("seq").as_int() + 1, versions, keyname, "", "", "", "", true)
+}
+
+// ── ключи ───────────────────────────────────────────────────────────────
+
+public fun cmd_keys_gen(name: string) {
+    set pubk = keygen(name)
+    ok("created signing key " + c_accent(name))
+    kv("public", pubk)
+    kv("fingerprint", fingerprint(pubk))
+    info("the secret seed stays in " + config_dir() + "/keys (mode 0600); give out only the public key")
+}
+
+// Подпись файла ключом name: строка "<pubkey> <sig>" для rotation.sigs.
+public fun cmd_keys_sign(name: string, file: string) {
+    println(pubkey_of(name) + " " + sign_text(name, file_read_text(file)))
+}
+
+public fun cmd_keys_export(name: string) {
+    println(pubkey_of(name))
+}
+
+public fun cmd_keys_list() {
+    set keys = trusted_keys()
+    set names = trusted_names()
+    if keys.len() == 0 {
+        info("no trusted keys yet: `yuki keys trust <name> <pubkey>`")
+        return
+    }
+    for i in 0..keys.len() {
+        println("  " + c_accent(pad_end(names[i], 16)) + " " + fingerprint(keys[i]) + "  " + c_dim(slice(keys[i], 0, 16) + "…"))
+    }
+}
+
+public fun cmd_keys_trust(name: string, pubkey: string, role: string, assume_yes: bool) {
+    trust_add(name, pubkey, role, assume_yes)
+    ok("trusted " + c_accent(name))
+}
+
+public fun cmd_keys_untrust(name: string) {
+    if trust_remove(name) {
+        ok("no longer trusting " + name)
+    } else {
+        warn("no trusted key named " + name)
+    }
+}
+
+// ── тема ────────────────────────────────────────────────────────────────
+
+public fun cmd_theme_path() {
+    println(theme_path())
+}
+
+public fun cmd_theme_init() {
+    set made = theme_write_template()
+    if made.len() == 0 {
+        warn("theme file already exists: " + theme_path())
+    } else {
+        ok("created " + c_accent(made))
+        info("edit it and run `yuki theme show` to preview")
+    }
+}
+
+public fun cmd_theme_show() {
+    println("  " + c_bold("theme") + "  " + c_dim(theme_path()))
+    kv("palette", theme_palette())
+    kv("animation", "on")
+    if !animation_on() {
+        kv("animation", "off (not a live terminal, CI, TERM=dumb or disabled in theme)")
+    }
+    println("")
+    println("  " + c_accent("accent") + "  " + c_good("good") + "  " + c_warn("warn") + "  " + c_bad("bad") + "  " + c_speed("speed") + "  " + c_dim("dim"))
+    println("")
+    ok("done " + c_dim("success"))
+    info("note " + c_dim("information"))
+    warn("careful " + c_dim("warning"))
+    bad("failed " + c_dim("problem"))
+    println("  " + c_dim(sym("branch")) + " " + c_accent("ansi-kit") + " " + c_dim("2.0.1") + "  " + c_good(sym("ok")))
+    println("  " + c_dim(sym("last")) + " " + c_accent("tomlkit") + " " + c_dim("0.4.0") + "  " + c_warn(sym("active")))
+    println("")
+    println("  " + render_bar(62, 100, 24) + " 62%  " + c_speed("2.1 MB/s"))
+}

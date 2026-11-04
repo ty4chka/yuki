@@ -1,0 +1,176 @@
+// ui.ykn — весь вывод yuki. Цвета и символы берутся из темы (theme.ykn),
+// поэтому здесь нет ни одного жёстко заданного цвета или глифа.
+
+load std.io: println, eprintln
+load std.outf: style, visible_len
+load std.stdotool.format: format_bytes, format_percent
+load std.strings: repeat, parse_int, slice, split, str_join
+load .theme: paint, sym, grad
+load .explain: has_explain
+
+// ── палитра ─────────────────────────────────────────────────────────────
+
+public fun c_accent(text: string) -> string {
+    return paint("accent", text)
+}
+
+public fun c_good(text: string) -> string {
+    return paint("good", text)
+}
+
+public fun c_warn(text: string) -> string {
+    return paint("warn", text)
+}
+
+public fun c_bad(text: string) -> string {
+    return paint("bad", text)
+}
+
+public fun c_dim(text: string) -> string {
+    return paint("dim", text)
+}
+
+public fun c_speed(text: string) -> string {
+    return paint("speed", text)
+}
+
+public fun c_bold(text: string) -> string {
+    return style(text).bold().to_string()
+}
+
+// ── статусы ─────────────────────────────────────────────────────────────
+
+public fun banner(version: string) {
+    println(paint("logo", "yuki") + " " + c_dim(version) + c_dim("  " + sym("dot") + "  package manager for Yukino"))
+    println("")
+}
+
+public fun rule(width: int64) -> string {
+    return c_dim(repeat(sym("rule"), width))
+}
+
+public fun ok(msg: string) {
+    println("  " + c_good(sym("ok")) + " " + msg)
+}
+
+public fun info(msg: string) {
+    println("  " + c_accent(sym("info")) + " " + msg)
+}
+
+public fun warn(msg: string) {
+    println("  " + c_warn(sym("warn")) + " " + msg)
+}
+
+public fun bad(msg: string) {
+    println("  " + c_bad(sym("fail")) + " " + msg)
+}
+
+public fun step(n: int64, total: int64, msg: string) {
+    println(c_dim("[" + cast(n, "string") + "/" + cast(total, "string") + "]") + " " + msg)
+}
+
+public fun kv(key: string, value: string) {
+    println("      " + c_dim(key) + "  " + value)
+}
+
+// "1.4s" из миллисекунд
+public fun fmt_secs(ms: int64) -> string {
+    set whole = ms / 1000
+    set tenth = (ms % 1000) / 100
+    return cast(whole, "string") + "." + cast(tenth, "string") + "s"
+}
+
+public fun done(took_ms: int64, hint: string) {
+    set tail = ""
+    if hint.len() > 0 {
+        rewrite tail = "  " + c_dim(sym("dot") + " " + hint)
+    }
+    println("  " + c_good(sym("ok")) + " done in " + fmt_secs(took_ms) + tail)
+}
+
+// ── диагностика ─────────────────────────────────────────────────────────
+//
+//   error[Y0301]: blake3 mismatch
+//     ╭─ ~/.cache/yuki/9c1e….part.tar.gz
+//     │
+//     ├─ help: do not use the file, retry once
+//     ╰─ note: run `yuki explain Y0301` for details
+//
+public fun diag_error(code: string, title: string, location: string, help: string) {
+    eprintln("  " + c_bad("error[" + code + "]") + ": " + c_bold(title))
+    set num: int64 = parse_int(slice(code, 1, code.len())) ?? 0
+    set tails: string[] = []
+    if help.len() > 0 {
+        tails.push(c_good("help") + ": " + str_join(split(help, "\n"), "\n         "))
+    }
+    if has_explain(num) {
+        tails.push(c_accent("note") + ": run `yuki explain " + code + "` for details")
+    }
+    set pipe = c_dim(sym("pipe"))
+    if location.len() > 0 {
+        if tails.len() > 0 {
+            eprintln("    " + c_dim(sym("tl") + sym("rule")) + " " + c_accent(location))
+            eprintln("    " + pipe)
+        } else {
+            eprintln("    " + c_dim(sym("bl") + sym("rule")) + " " + c_accent(location))
+        }
+    }
+    for i in 0..tails.len() {
+        set glyph = c_dim(sym("branch") )
+        if i == tails.len() - 1 {
+            rewrite glyph = c_dim(sym("last"))
+        }
+        eprintln("    " + glyph + " " + tails[i])
+    }
+    eprintln("")
+}
+
+// ── карточка результата ─────────────────────────────────────────────────
+
+public fun card(ref rows: string[]) {
+    set w: int64 = 0
+    for i in 0..rows.len() {
+        if visible_len(rows[i]) > w {
+            rewrite w = visible_len(rows[i])
+        }
+    }
+    set pipe = c_dim(sym("pipe"))
+    println("  " + c_dim(sym("tl") + repeat(sym("rule"), w + 2) + sym("tr")))
+    for i in 0..rows.len() {
+        println("  " + pipe + " " + rows[i] + repeat(" ", w - visible_len(rows[i])) + " " + pipe)
+    }
+    println("  " + c_dim(sym("bl") + repeat(sym("rule"), w + 2) + sym("br")))
+}
+
+// ── прогресс ────────────────────────────────────────────────────────────
+
+public fun render_bar(cur: int64, total: int64, width: int64) -> string {
+    set full: int64 = 0
+    if total > 0 {
+        rewrite full = width * cur / total
+    }
+    if full > width {
+        rewrite full = width
+    }
+    set out = ""
+    for i in 0..width {
+        if i < full {
+            rewrite out = out + grad(sym("bar_full"), i, width)
+        } elif i == full && cur < total {
+            rewrite out = out + grad(sym("bar_head"), i, width)
+        } else {
+            rewrite out = out + c_dim(sym("bar_empty"))
+        }
+    }
+    return out
+}
+
+public fun progress_line(label: string, cur: int64, total: int64) -> string {
+    set pct = format_percent(cur, total)
+    set size = format_bytes(cur) + " / " + format_bytes(total)
+    return "  " + c_accent(label) + " " + render_bar(cur, total, 24) + " " + pct + "  " + c_dim(size)
+}
+
+public fun bytes_line(label: string, received: int64) -> string {
+    return "  " + c_accent(label) + " " + c_dim("downloading… ") + format_bytes(received)
+}

@@ -1,0 +1,13 @@
+// errors.ykn — общая ошибка yuki.
+// Диапазоны кодов: 1xx конфиг, 2xx индекс, 3xx проверка (VerifyError + 300),
+// 4xx сеть, 5xx manifest, 6xx ключи.
+
+public struct YukiError {
+    message: string
+    code: int32
+    path: string
+}
+
+public fun err(message: string, code: int32, path: string) -> YukiError {
+    return YukiError { message: message, code: code, path: path }
+}

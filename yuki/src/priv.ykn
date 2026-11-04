@@ -1,0 +1,76 @@
+// priv.ykn — разделение привилегий.
+//
+// Сеть, разбор чужих данных и сборка выполняются в дочернем процессе, который
+// сначала отказывается от root: setgroups(0) → setgid → setuid → проверка, что
+// root вернуть нельзя → no_new_privs (setuid-бинарники больше не повышают права).
+// Root-часть ничему из того, что принёс ребёнок, не верит и всё проверяет заново.
+
+load std.os.unix: fork, waitpid, kill, geteuid
+load .errors: YukiError, err
+
+cfun setgroups(size: c_size_t, list: ptr<c_uint>) -> c_int;
+cfun setgid(gid: c_uint) -> c_int;
+cfun setuid(uid: c_uint) -> c_int;
+cfun sync() -> void;
+cfun prctl(option: c_int, a2: c_size_t, a3: c_size_t, a4: c_size_t, a5: c_size_t) -> c_int;
+
+public fun is_root() -> bool {
+    return geteuid() == 0
+}
+
+// Пользователь без прав для сетевой и сборочной фазы.
+public fun nobody_id() -> c_uint {
+    set id: c_uint = 65534
+    return id
+}
+
+public fun drop_privileges(uid: c_uint, gid: c_uint) {
+    if !is_root() {
+        return
+    }
+    set none: c_size_t = 0
+    set dummy: c_uint = 0
+    set zero: c_uint = 0
+    if setgroups(none, ptr_of(dummy)) != 0 {
+        panic(err("could not clear supplementary groups", 701, ""))
+    }
+    if setgid(gid) != 0 {
+        panic(err("could not drop the group", 701, ""))
+    }
+    if setuid(uid) != 0 {
+        panic(err("could not drop root", 701, ""))
+    }
+    if setuid(zero) == 0 {
+        panic(err("privileges could be regained, refusing to continue", 702, ""))
+    }
+    set a1: c_size_t = 1
+    set a0: c_size_t = 0
+    set opt: c_int = 38
+    prctl(opt, a1, a0, a0, a0)
+}
+
+// Убить все процессы пользователя uid: после ребёнка не должно остаться демонов,
+// которые продолжили бы менять файлы, пока root их проверяет.
+public fun kill_all_as(uid: c_uint) {
+    if !is_root() {
+        return
+    }
+    set pid = fork()
+    if pid < 0 {
+        panic(err("fork failed", 703, ""))
+    }
+    if pid == 0 {
+        sus {
+            drop_privileges(uid, uid)
+            kill(-1, 9)
+        } catch {
+        }
+        exit(0)
+    }
+    waitpid(pid, 0)
+}
+
+// Сбросить буферы файловой системы на диск: точки долговечности журнала транзакции.
+public fun sync_disk() {
+    sync()
+}

@@ -1,0 +1,668 @@
+// sysinstall.ykn — системные команды в духе pacman: install, uninstall, upgrade,
+// list, info, files, owns, check, audit, history, rollback.
+//
+// install = пять шагов, и только последний делает root-изменения:
+//   1. ребёнок (nobody, no_new_privs) приносит записи индекса
+//   2. root заново проверяет подписи, срок, откат и строит план; спрашивает подтверждение
+//   3. ребёнок скачивает готовые сборки или собирает в песочнице то, что root одобрил
+//   4. root копирует артефакты к себе, заново проверяет blake3 и аудит, распаковывает в свой каталог
+//   5. root применяет транзакцию с журналом и откатом
+
+load std.io: print, println, read_line
+load std.env: get_or, set_env
+load std.fs.files: file_exists, file_read_text, file_write_text, file_copy, file_metadata
+load std.fs.dirs: dir_create_all, dir_list
+load std.fs.paths: path_join, path_file_name
+load std.fs.archives.tar: tar_unpack, tar_list, TarError
+load std.hash.blake3: blake3_file
+load std.process: run
+load std.stdotool.format: format_bytes
+load std.strings: eq, lower, trim, str_join, parse_int, lines, contains, starts_with, ends_with, slice, pad_end, index_of, split
+load .errors: YukiError, err
+load .config: state_dir, host_target, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
+load .view: InstallView
+load .ui: ok, info, warn, bad, step, kv, card, done, c_accent, c_good, c_warn, c_bad, c_dim, c_bold
+load .theme: sym, animation_on
+load .priv: is_root
+load .stage: stage_create, stage_remove, run_child, write_roots
+load .sysplan: PNode, plan_nodes, spec_name, spec_ver
+load .sysbuild: build_policy
+load .pipeline: archive_ext
+load .verify: VerifyError, check_blake3, audit_tar
+load .apply: ApplyItem, apply_transaction, remove_package, rollback_locked, check_package
+load .sysdb: PkgRecord, is_held, is_explicit, mark_explicit, orphans, dependents_of, db_names, db_read, db_has, db_files, owner_of, f_kind, f_path, history_add
+load .util: now_ms, valid_name, valid_version, dep_name
+
+fun need_root() {
+    if !is_root() {
+        panic(err("changing the system needs root: run `sudo yuki ...`", 750, ""))
+    }
+}
+
+fun flag(name: string) -> bool {
+    return eq(get_or(name, ""), "1")
+}
+
+fun ask(question: string, default_yes: bool) -> bool {
+    set hint = "[y/N]"
+    if default_yes {
+        rewrite hint = "[Y/n]"
+    }
+    print("  " + c_accent("::") + " " + question + " " + c_dim(hint) + " ")
+    set answer = lower(trim(read_line()))
+    if answer.len() == 0 {
+        return default_yes
+    }
+    return eq(answer, "y") || eq(answer, "yes")
+}
+
+// ── план и подтверждения ────────────────────────────────────────────────
+
+fun show_plan(ref nodes: PNode[]) {
+    println("")
+    println("  " + c_accent("::") + " " + c_bold("Packages") + " (" + cast(nodes.len(), "string") + ")  " + c_dim("target " + host_target()))
+    for i in 0..nodes.len() {
+        set label = c_bold(nodes[i].rel.name) + " " + c_good(nodes[i].rel.version)
+        set act = nodes[i].action
+        if eq(act, "bin") {
+            println("    " + c_good("+") + " " + label + c_dim("   prebuilt binary"))
+        } elif eq(act, "src") {
+            println("    " + c_warn(sym("warn")) + " " + label + c_warn("   no binary, BUILD FROM SOURCE"))
+        } elif eq(act, "installed") {
+            println("    " + c_dim("=") + " " + label + c_dim("   already installed"))
+        } else {
+            println("    " + c_bad(sym("fail")) + " " + label + c_bad("   no binary for this platform and no source"))
+        }
+    }
+    println("")
+}
+
+// Сборка из исходников — всегда отдельное явное согласие; --yes его не заменяет.
+fun approve_builds(stage: string, ref nodes: PNode[]) {
+    set approved: string[] = []
+    set policy = build_policy()
+    for i in 0..nodes.len() {
+        if !eq(nodes[i].action, "src") {
+            continue
+        }
+        set name = nodes[i].rel.name
+        warn(name + " has no binary for " + host_target() + ": it has to be built here")
+        kv("build", str_join(nodes[i].rel.build, " "))
+        kv("packages", cast(nodes[i].rel.files.len(), "string") + " files, listed in the signed index")
+        if nodes[i].rel.src_net {
+            kv("network", "ALLOWED by this package")
+        } else {
+            kv("network", "none")
+        }
+        kv("sandbox", policy)
+        set pinned = true
+        for q in 0..nodes[i].rel.files.len() {
+            set fp = split(nodes[i].rel.files[q], "|")
+            if fp.len() < 4 || fp[3].len() == 0 {
+                rewrite pinned = false
+            }
+        }
+        if pinned {
+            kv("result", "every file is checked against a signed blake3 (reproducible)")
+        } else {
+            kv("result", "NOT pinned: the output cannot be compared with a signed hash")
+        }
+        if eq(policy, "refused") {
+            panic(err("cannot build " + name + ": no sandbox (install bubblewrap)", 742, name))
+        }
+        if eq(policy, "unsandboxed") {
+            warn("the build will run WITHOUT a sandbox (allowed by allow_unsandboxed_build)")
+        }
+        set go = flag("YUKI_ALLOW_BUILD")
+        if !go {
+            rewrite go = ask("Build " + name + " from source?", false)
+        }
+        if !go {
+            panic(err("building " + name + " was declined", 746, name))
+        }
+        approved.push(name)
+    }
+    file_write_text(path_join(stage, "approved"), str_join(approved, "\n") + "\n")
+}
+
+// ── проверка принесённого root'ом ───────────────────────────────────────
+
+fun plain_file(path: string) -> bool {
+    if !file_exists(path) {
+        return false
+    }
+    set md = file_metadata(path)
+    return md.is_file && !md.is_symlink
+}
+
+fun norm_tar_path(p: string) -> string {
+    set r = p
+    if starts_with(r, "./") {
+        rewrite r = slice(r, 2, r.len())
+    }
+    if ends_with(r, "/") {
+        rewrite r = slice(r, 0, r.len() - 1)
+    }
+    return r
+}
+
+// Всё, что лежит в dl/, принёс недоверенный процесс: копируем к себе (только обычные
+// файлы, без симлинков), заново проверяем хеш и аудит, распаковываем в каталог root.
+// Для сборок из исходников файлы сверяются с подписанными blake3 (если они указаны).
+// Возвращает число сборок, результат которых нечем проверить (без хеша в записи).
+fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 {
+    set unpinned: int64 = 0
+    set dl = path_join(stage, "dl")
+    set n = nodes.len()
+    for k in 0..n {
+        set i = n - 1 - k
+        if eq(nodes[i].action, "installed") {
+            continue
+        }
+        set name = nodes[i].rel.name
+        set dir = path_join(path_join(dl, "pkgs"), name)
+        set from = ""
+        set ext = ""
+        set checksum = ""
+        set origin = "binary"
+        if eq(nodes[i].action, "bin") {
+            rewrite ext = archive_ext(nodes[i].rel.bin_url)
+            rewrite from = path_join(dir, "pkg" + ext)
+            rewrite checksum = nodes[i].rel.bin_checksum
+        } else {
+            rewrite ext = ".tar.zst"
+            rewrite from = path_join(dir, "pkg.tar.zst")
+            rewrite origin = "source"
+        }
+        if file_metadata(dir).is_symlink || !plain_file(from) {
+            panic(err("unexpected artifact layout for " + name, 753, name))
+        }
+
+        set copy = path_join(path_join(stage, "art"), name + ext)
+        file_copy(from, copy)
+        if eq(origin, "binary") {
+            check_blake3(copy, checksum)
+        } else {
+            rewrite checksum = "blake3:" + blake3_file(copy)
+        }
+        audit_tar(copy, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, true)
+
+        // безопасные симлинки из аудированного списка архива
+        set links: string[] = []
+        set ents = tar_list(copy)
+        for e in 0..ents.len() {
+            if ents[e].link_target.len() > 0 {
+                links.push(norm_tar_path(ents[e].path) + "|" + ents[e].link_target)
+            }
+        }
+
+        set root_dir = path_join(path_join(stage, "root"), name)
+        dir_create_all(root_dir)
+        tar_unpack(copy, root_dir)
+
+        if eq(origin, "source") {
+            set pinned = true
+            for q in 0..nodes[i].rel.files.len() {
+                set fp = split(nodes[i].rel.files[q], "|")
+                if fp.len() > 3 && fp[3].len() > 0 {
+                    check_blake3(path_join(root_dir, fp[1]), fp[3])
+                } else {
+                    rewrite pinned = false
+                }
+            }
+            if !pinned {
+                rewrite unpinned += 1
+            }
+        }
+
+        set reason = "dep"
+        if nodes[i].parent < 0 {
+            rewrite reason = "explicit"
+        }
+        if db_has(name) && is_explicit(name) {
+            rewrite reason = "explicit"
+        }
+        set deps: string[] = []
+        for d in 0..nodes[i].rel.deps.len() {
+            deps.push(dep_name(nodes[i].rel.deps[d]))
+        }
+        items.push(ApplyItem {
+            name: name,
+            version: nodes[i].rel.version,
+            checksum: checksum,
+            signer: nodes[i].rel.signer,
+            origin: origin,
+            deps: str_join(deps, ","),
+            root: root_dir,
+            reason: reason,
+            summary: nodes[i].rel.summary,
+            links: links,
+        })
+    }
+    return unpinned
+}
+
+// ── install ─────────────────────────────────────────────────────────────
+
+fun root_names(ref roots: string[]) -> string {
+    set names: string[] = []
+    for i in 0..roots.len() {
+        names.push(spec_name(roots[i]))
+    }
+    return str_join(names, ", ")
+}
+
+// Один общий план и одна транзакция для всех корней (install a b c, upgrade).
+fun install_core(stage: string, ref roots: string[]) {
+    set t0 = now_ms()
+    set dl = path_join(stage, "dl")
+    set quiet = init InstallView("", false)
+    set nomap: int64[] = []
+
+    step(1, 2, "asking the index " + c_dim("(unprivileged)"))
+    run_child(stage, "plan", ref ~quiet, ref nomap)
+
+    step(2, 2, "verifying signatures and building the plan as root")
+    set nodes = plan_nodes(dl, ref roots, false, true)
+    show_plan(ref nodes)
+    set work: int64 = 0
+    for i in 0..nodes.len() {
+        if eq(nodes[i].action, "none") {
+            panic(err("no binary for " + host_target() + " and no source release: " + nodes[i].rel.name, 752, nodes[i].rel.name))
+        }
+        if !eq(nodes[i].action, "installed") {
+            rewrite work += 1
+        }
+    }
+    if work == 0 {
+        for i in 0..nodes.len() {
+            if nodes[i].parent < 0 && db_has(nodes[i].rel.name) {
+                mark_explicit(nodes[i].rel.name)
+            }
+        }
+        ok("everything is up to date")
+        return
+    }
+    if !flag("YUKI_YES") {
+        if !ask("Proceed with installation?", true) {
+            panic(err("aborted", 753, ""))
+        }
+    }
+    approve_builds(stage, ref nodes)
+
+    // живая панель: дерево только из того, что реально будет ставиться
+    set view = init InstallView("install " + c_accent(root_names(ref roots)), animation_on())
+    set vmap: int64[] = []
+    for i in 0..nodes.len() {
+        if eq(nodes[i].action, "installed") {
+            vmap.push(-1)
+        } else {
+            set pv: int64 = -1
+            if nodes[i].parent >= 0 {
+                rewrite pv = vmap[nodes[i].parent]
+            }
+            vmap.push(view.add_node(nodes[i].rel.name, nodes[i].rel.version, pv))
+        }
+    }
+    view.set_phase(1, cast(work, "string") + " package(s) " + c_dim(sym("dot") + " signed by " + nodes[0].rel.signer))
+
+    // порядок задач совпадает с порядком в sysbuild.child_fetch: узлы bin и src по порядку
+    set jobmap: int64[] = []
+    for i in 0..nodes.len() {
+        if eq(nodes[i].action, "bin") || eq(nodes[i].action, "src") {
+            jobmap.push(vmap[i])
+        }
+    }
+    run_child(stage, "fetch", ref ~view, ref jobmap)
+    view.set_phase(2, "downloaded and built " + c_dim(sym("dot") + " " + cast(jobmap.len(), "string") + " archive(s) in parallel"))
+
+    set items: ApplyItem[] = []
+    set unpinned = collect(stage, ref nodes, ref items)
+    for i in 0..nodes.len() {
+        view.set_state(vmap[i], 3)
+    }
+    view.draw(true)
+    set txid = apply_transaction(ref items, flag("YUKI_OVERWRITE"))
+    view.set_phase(3, "committed " + c_dim("(" + txid + ")"))
+    view.finish()
+
+    // обновление самого yuki: новый бинарник обязан запуститься, иначе откат
+    for i in 0..items.len() {
+        if eq(items[i].name, "yuki") {
+            set r = run("/usr/bin/yuki", ["version"])
+            if !r.success() {
+                rollback_locked(txid)
+                panic(err("the new yuki failed its self-check; rolled back", 754, txid))
+            }
+            ok("new yuki passed its self-check")
+        }
+    }
+    if unpinned > 0 {
+        warn(cast(unpinned, "string") + " source build(s) could not be compared with a signed hash")
+    }
+    println("")
+    done(now_ms() - t0, "undo with `sudo yuki rollback " + txid + "`")
+}
+
+fun install_one(ref roots: string[]) {
+    set stage = stage_create()
+    write_roots(stage, ref roots)
+    sus {
+        install_core(stage, ref roots)
+    } catch e: YukiError {
+        stage_remove(stage)
+        panic(e)
+    } catch e: VerifyError {
+        stage_remove(stage)
+        panic(e)
+    } catch e: TarError {
+        stage_remove(stage)
+        panic(e)
+    } catch {
+        stage_remove(stage)
+        panic(err("install failed: " + errkind, 755, root_names(ref roots)))
+    }
+    stage_remove(stage)
+}
+
+fun check_spec(spec: string) {
+    set name = spec_name(spec)
+    set want = spec_ver(spec)
+    if want.len() > 0 && !valid_version(want) {
+        panic(err("version must look like 1.2.3", 210, want))
+    }
+    if !valid_name(name) {
+        panic(err("invalid package name: " + name, 201, name))
+    }
+}
+
+// install a b c: один план и одна транзакция.
+public fun cmd_sys_install_many(ref specs: string[]) {
+    need_root()
+    for i in 0..specs.len() {
+        check_spec(specs[i])
+    }
+    install_one(ref specs)
+}
+
+public fun cmd_sys_install(spec: string) {
+    set one: string[] = [spec]
+    cmd_sys_install_many(ref one)
+}
+
+// ── uninstall / upgrade ─────────────────────────────────────────────────
+
+// Убрать зависимости удалённого пакета, которые больше никому не нужны (-Rs).
+fun remove_unneeded(deps_csv: string) {
+    set ds = split(deps_csv, ",")
+    for i in 0..ds.len() {
+        if ds[i].len() > 0 && db_has(ds[i]) && !is_explicit(ds[i]) && dependents_of(ds[i]).len() == 0 {
+            set sub = db_read(ds[i]).deps
+            remove_package(ds[i], false)
+            ok("removed unneeded " + c_accent(ds[i]))
+            remove_unneeded(sub)
+        }
+    }
+}
+
+public fun cmd_sys_uninstall(name: string, force: bool) {
+    need_root()
+    set rec = db_read(name)
+    println("")
+    println("  " + c_accent("::") + " Remove " + c_bold(rec.name) + " " + c_good(rec.version) + " (" + cast(db_files(name).len(), "string") + " files)")
+    set dependents = dependents_of(name)
+    if dependents.len() > 0 {
+        warn("required by: " + str_join(dependents, ", "))
+    }
+    if flag("YUKI_RECURSIVE") && rec.deps.len() > 0 {
+        info("unneeded dependencies will go too: " + rec.deps)
+    }
+    if !flag("YUKI_YES") {
+        if !ask("Proceed?", true) {
+            panic(err("aborted", 753, ""))
+        }
+    }
+    set txid = remove_package(name, force)
+    ok("removed " + name)
+    if flag("YUKI_RECURSIVE") {
+        remove_unneeded(rec.deps)
+    }
+    info("undo with `sudo yuki rollback " + txid + "`")
+}
+
+// Убрать все осиротевшие зависимости.
+public fun cmd_sys_autoremove() {
+    need_root()
+    set orph = orphans()
+    if orph.len() == 0 {
+        ok("no orphaned dependencies")
+        return
+    }
+    println("")
+    println("  " + c_accent("::") + " " + c_bold("Orphans") + " (" + cast(orph.len(), "string") + ")  " + c_dim("installed as dependencies, nothing needs them now"))
+    for i in 0..orph.len() {
+        println("    " + c_warn("-") + " " + orph[i])
+    }
+    println("")
+    if !flag("YUKI_YES") {
+        if !ask("Remove them?", true) {
+            panic(err("aborted", 753, ""))
+        }
+    }
+    for i in 0..orph.len() {
+        if db_has(orph[i]) && dependents_of(orph[i]).len() == 0 {
+            remove_package(orph[i], false)
+            ok("removed " + c_accent(orph[i]))
+        }
+    }
+}
+
+// Версия из индекса (через ребёнка), "" если подходящего релиза нет (снят или удалён).
+fun peek_version(name: string, want: string) -> string {
+    set spec = name
+    if want.len() > 0 {
+        rewrite spec = name + "@" + want
+    }
+    set roots: string[] = [spec]
+    set stage = stage_create()
+    write_roots(stage, ref roots)
+    set quiet = init InstallView("", false)
+    set nomap: int64[] = []
+    set found = ""
+    sus {
+        run_child(stage, "plan", ref ~quiet, ref nomap)
+        set nodes = plan_nodes(path_join(stage, "dl"), ref roots, false, false)
+        rewrite found = nodes[0].rel.version
+    } catch e: YukiError {
+        stage_remove(stage)
+        if e.code == 206 {
+            return ""
+        }
+        panic(e)
+    } catch {
+        stage_remove(stage)
+        panic(err("could not query the index: " + errkind, 755, name))
+    }
+    stage_remove(stage)
+    return found
+}
+
+// upgrade: один общий план и ОДНА транзакция для всех обновляемых пакетов.
+public fun cmd_sys_upgrade(only: string) {
+    need_root()
+    set names = db_names()
+    set todo: string[] = []
+    set news: string[] = []
+    for i in 0..names.len() {
+        if only.len() > 0 && !eq(only, names[i]) {
+            continue
+        }
+        if is_held(names[i]) && only.len() == 0 {
+            info(names[i] + " is held back " + c_dim("(yuki unhold " + names[i] + ")"))
+            continue
+        }
+        set cur = db_read(names[i]).version
+        set latest = peek_version(names[i], "")
+        if latest.len() > 0 && valid_version(latest) && valid_version(cur) {
+            if !eq(latest, cur) {
+                todo.push(names[i])
+                news.push(cur + " " + sym("arrow") + " " + latest)
+            }
+        }
+    }
+    if todo.len() == 0 {
+        ok("everything is up to date")
+        return
+    }
+    println("")
+    println("  " + c_accent("::") + " " + c_bold("Upgrades") + " (" + cast(todo.len(), "string") + ")")
+    for i in 0..todo.len() {
+        println("    " + c_good("+") + " " + c_bold(pad_end(todo[i], 18)) + c_dim(news[i]))
+    }
+    println("")
+    if !flag("YUKI_YES") {
+        if !ask("Proceed with the upgrade?", true) {
+            panic(err("aborted", 753, ""))
+        }
+        set_env("YUKI_YES", "1")
+    }
+    install_one(ref todo)
+}
+
+// ── запросы ─────────────────────────────────────────────────────────────
+
+public fun cmd_sys_list() {
+    set names = db_names()
+    if names.len() == 0 {
+        info("no packages installed")
+        return
+    }
+    for i in 0..names.len() {
+        set r = db_read(names[i])
+        println("  " + c_accent(pad_end(r.name, 20)) + c_good(pad_end(r.version, 10)) + c_dim(r.origin))
+    }
+}
+
+public fun cmd_sys_info(name: string) {
+    set r = db_read(name)
+    println("  " + c_bold(r.name) + " " + c_good(r.version))
+    kv("origin", r.origin)
+    kv("checksum", r.checksum)
+    kv("signed by", r.signer)
+    kv("depends", r.deps)
+    kv("files", cast(db_files(name).len(), "string"))
+    kv("installed", cast(r.installed_at, "string") + " (unix time)")
+}
+
+public fun cmd_sys_files(name: string) {
+    set fl = db_files(name)
+    for i in 0..fl.len() {
+        if eq(f_kind(fl[i]), "f") {
+            println("/" + f_path(fl[i]))
+        }
+    }
+}
+
+public fun cmd_sys_owns(path: string) {
+    set rel = path
+    if starts_with(path, "/") {
+        rewrite rel = slice(path, 1, path.len())
+    }
+    set who = owner_of(rel)
+    if who.len() == 0 {
+        warn("/" + rel + " is not owned by any package")
+    } else {
+        println("  /" + rel + " " + c_dim("is owned by") + " " + c_accent(who))
+    }
+}
+
+public fun cmd_sys_check(only: string) {
+    set names = db_names()
+    set total: int64 = 0
+    for i in 0..names.len() {
+        if only.len() > 0 && !eq(only, names[i]) {
+            continue
+        }
+        set problems = check_package(names[i])
+        if problems.len() == 0 {
+            ok(names[i] + " " + c_dim("all files match"))
+        } else {
+            for k in 0..problems.len() {
+                bad(names[i] + ": " + problems[k])
+                rewrite total += 1
+            }
+        }
+    }
+    if total > 0 {
+        panic(err(cast(total, "string") + " problem(s) found", 756, ""))
+    }
+}
+
+// Сверка установленного с подписанным индексом: снятые (yanked) и пропавшие релизы.
+public fun cmd_sys_audit() {
+    need_root()
+    set names = db_names()
+    set problems: int64 = 0
+    for i in 0..names.len() {
+        set cur = db_read(names[i]).version
+        set same = peek_version(names[i], cur)
+        if same.len() == 0 {
+            bad(names[i] + " " + cur + ": withdrawn from the index (yanked or removed)")
+            rewrite problems += 1
+        } else {
+            ok(names[i] + " " + cur + " " + c_dim("is still in the signed index"))
+        }
+    }
+    if problems > 0 {
+        panic(err(cast(problems, "string") + " withdrawn package(s): consider `sudo yuki uninstall`", 757, ""))
+    }
+}
+
+public fun cmd_sys_history() {
+    set f = path_join(state_dir(), "history")
+    if !file_exists(f) {
+        info("no transactions yet")
+        return
+    }
+    set ls = lines(file_read_text(f))
+    for i in 0..ls.len() {
+        if trim(ls[i]).len() > 0 {
+            println("  " + c_dim(trim(ls[i])))
+        }
+    }
+}
+
+// Откат последней незакрытой транзакции (или указанной).
+public fun cmd_sys_rollback(txid: string) {
+    need_root()
+    set target = txid
+    if target.len() == 0 {
+        set base = path_join(state_dir(), "tx")
+        set best: int64 = 0
+        if true {
+            sus {
+                set all = dir_list(base)
+                for i in 0..all.len() {
+                    set id = path_file_name(all[i])
+                    set n: int64 = parse_int(id) ?? 0
+                    if n > best && file_exists(path_join(all[i], "COMMITTED")) && !file_exists(path_join(all[i], "ROLLED_BACK")) {
+                        rewrite best = n
+                    }
+                }
+            } catch {
+                rewrite best = 0
+            }
+        }
+        if best == 0 {
+            panic(err("no transaction to roll back", 731, ""))
+        }
+        rewrite target = cast(best, "string")
+    }
+    if !flag("YUKI_YES") {
+        if !ask("Roll back transaction " + target + "?", false) {
+            panic(err("aborted", 753, ""))
+        }
+    }
+    rollback_locked(target)
+    ok("rolled back " + target)
+}

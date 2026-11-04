@@ -1,0 +1,433 @@
+// indexadmin.ykn — инструменты мейнтейнера индекса и CI.
+//
+//   yuki index add <release.json> <key>   добавить релиз (хеши докачиваются и проверяются сами)
+//   yuki index check [download]           проверка всего индекса: подписи, поля, зависимости, сроки
+//   yuki index catalog <key>              пересобрать подписанный catalog.json для `yuki search`
+//   yuki index renew-all <key> [days]     продлить записи, которые скоро истекают
+//
+// release.json (массивы вместо словарей, чтобы формат не зависел от имён платформ):
+// {
+//   "name": "ripgrep", "kind": "app", "version": "14.1.0",
+//   "summary": "line-oriented search tool", "homepage": "https://…", "license": "MIT",
+//   "bin": [ { "target": "linux-x86_64", "url": "https://…/rg-14.1.0-linux-x86_64.tar.zst" } ],
+//   "src": { "url": "https://…/rg-14.1.0.tar.gz", "net": false,
+//            "build": ["yukino", "build", "--release"],
+//            "files": [ { "from": "target/release/rg", "to": "usr/bin/rg", "mode": "755" } ] },
+//   "deps": ["pcre2@10.42.0"]
+// }
+// Для kind = "lib": вместо bin/src указывается "url" архива. Поле "checksum" можно не писать.
+
+load std.io: println
+load std.json: JsonValue, json_parse, json_object, json_array, json_string, json_int, json_bool, json_pretty, json_validate, json_stringify
+load std.fs.files: file_exists, file_read_text, file_write_text
+load std.fs.dirs: dir_create_all, dir_walk
+load std.fs.paths: path_join, path_parent, path_file_name, path_file_stem
+load std.strings: eq, trim, ends_with, starts_with, split, slice, str_join, contains, parse_int
+load .errors: YukiError, err
+load .ui: ok, info, warn, bad, step, c_accent, c_dim, c_good
+load .index: Release, entry_rel, entry_dir, resolve_text
+load .trust: sign_text, pubkey_of
+load .pipeline: fetch_unpinned
+load .fetch: check_url
+load .verify: VerifyError, checksum_ok_format
+load .util: valid_name, valid_version, valid_dep_spec, dep_name, ver_cmp, now_secs
+
+static ENTRY_LIFETIME: int64 = 7776000
+static RENEW_WARN: int64 = 2592000
+
+fun need_checkout() {
+    if !file_exists("index") {
+        panic(err("run this inside a checkout of the index repository (no ./index directory)", 211, "index"))
+    }
+}
+
+// Записать entry и подпись. Пустые kind/summary/homepage/license берутся из существующего файла.
+// renew == true: содержимое не менялось, старые подписи содержимого (content_sigs) сохраняются,
+// поэтому ключ-«продлеватель» может обновить срок, но не может изменить релизы.
+public fun write_entry(name: string, seq: int64, versions: JsonValue, keyname: string, kind: string, summary: string, homepage: string, license: string, renew: bool) {
+    set rel = entry_rel(name)
+    set k = kind
+    set sm = summary
+    set hp = homepage
+    set lc = license
+    if file_exists(rel) {
+        set old = json_parse(file_read_text(rel))
+        if k.len() == 0 {
+            rewrite k = old.get("kind").as_string_or("")
+        }
+        if sm.len() == 0 {
+            rewrite sm = old.get("summary").as_string_or("")
+        }
+        if hp.len() == 0 {
+            rewrite hp = old.get("homepage").as_string_or("")
+        }
+        if lc.len() == 0 {
+            rewrite lc = old.get("license").as_string_or("")
+        }
+    }
+    if k.len() == 0 {
+        rewrite k = "lib"
+    }
+    // подписи содержимого: при продлении переносятся, иначе содержимое подписывает этот ключ
+    set vtext = "content\n" + json_stringify(versions.cp())
+    set csigs = json_array([])
+    set carried = false
+    if renew && file_exists(rel) {
+        set oldc = json_parse(file_read_text(rel)).get("content_sigs")
+        for i in 0..oldc.len() {
+            csigs.push(oldc.at(i).cp())
+            rewrite carried = true
+        }
+    }
+    if !carried {
+        set me = json_object()
+        me.set("key", json_string(pubkey_of(keyname)))
+        me.set("sig", json_string(sign_text(keyname, vtext)))
+        csigs.push(me)
+    }
+    set root = json_object()
+    root.set("name", json_string(name))
+    root.set("kind", json_string(k))
+    if sm.len() > 0 {
+        root.set("summary", json_string(sm))
+    }
+    if hp.len() > 0 {
+        root.set("homepage", json_string(hp))
+    }
+    if lc.len() > 0 {
+        root.set("license", json_string(lc))
+    }
+    root.set("seq", json_int(seq))
+    root.set("expires", json_int(now_secs() + ENTRY_LIFETIME))
+    root.set("versions", versions)
+    root.set("content_sigs", csigs)
+    set text = json_pretty(root) + "\n"
+    set sig = sign_text(keyname, text)
+    dir_create_all(entry_dir(name))
+    file_write_text(rel, text)
+    file_write_text(rel + ".sig", pubkey_of(keyname) + " " + sig + "\n")
+    ok("wrote " + c_accent(rel) + " " + c_dim("seq " + cast(seq, "string") + ", valid 90 days"))
+}
+
+// ── index add ───────────────────────────────────────────────────────────
+
+fun filled_checksum(url: string, given: string, label: string) -> string {
+    check_url(url)
+    if given.len() > 0 {
+        if !checksum_ok_format(given) {
+            panic(err("malformed checksum for " + label, 209, label))
+        }
+        return given
+    }
+    info("downloading " + c_dim(url))
+    return fetch_unpinned(url)
+}
+
+public fun cmd_index_add(file: string, keyname: string) {
+    need_checkout()
+    if !file_exists(file) {
+        panic(err("release file not found: " + file, 501, file))
+    }
+    set text = file_read_text(file)
+    if !json_validate(text) {
+        panic(err("release file is not valid JSON", 219, file))
+    }
+    set rj = json_parse(text)
+    set name = rj.get("name").as_string_or("")
+    set kind = rj.get("kind").as_string_or("lib")
+    set version = rj.get("version").as_string_or("")
+    if !valid_name(name) {
+        panic(err("invalid package name: " + name, 201, file))
+    }
+    if !valid_version(version) {
+        panic(err("version must look like 1.2.3", 210, file))
+    }
+    if !eq(kind, "lib") && !eq(kind, "app") {
+        panic(err("kind must be lib or app", 218, file))
+    }
+
+    step(1, 3, "checking artifacts for " + c_accent(name + " " + version))
+    set item = json_object()
+    item.set("version", json_string(version))
+    item.set("yanked", json_bool(false))
+
+    if eq(kind, "lib") {
+        set url = rj.get("url").as_string_or("")
+        item.set("url", json_string(url))
+        item.set("checksum", json_string(filled_checksum(url, rj.get("checksum").as_string_or(""), name)))
+    } else {
+        set binobj = json_object()
+        set targets = json_array([])
+        set bl = rj.get("bin")
+        for i in 0..bl.len() {
+            set t = bl.at(i).get("target").as_string_or("")
+            set u = bl.at(i).get("url").as_string_or("")
+            if t.len() == 0 || contains(t, "\"") {
+                panic(err("every bin entry needs a target like linux-x86_64", 219, file))
+            }
+            set b = json_object()
+            b.set("url", json_string(u))
+            b.set("checksum", json_string(filled_checksum(u, bl.at(i).get("checksum").as_string_or(""), name + " " + t)))
+            binobj.set(t, b)
+            targets.push(json_string(t))
+        }
+        if bl.len() > 0 {
+            item.set("bin", binobj)
+            item.set("targets", targets)
+        }
+        set sj = rj.get("src")
+        set su = sj.get("url").as_string_or("")
+        if su.len() > 0 {
+            set so = json_object()
+            so.set("url", json_string(su))
+            so.set("checksum", json_string(filled_checksum(su, sj.get("checksum").as_string_or(""), name + " source")))
+            so.set("net", json_bool(sj.get("net").as_bool_or(false)))
+            so.set("build", sj.get("build").cp())
+            so.set("files", sj.get("files").cp())
+            item.set("src", so)
+        }
+        if bl.len() == 0 && su.len() == 0 {
+            panic(err("an app needs at least one bin target or a src block", 219, file))
+        }
+    }
+    set dj = rj.get("deps")
+    if dj.len() > 0 {
+        for i in 0..dj.len() {
+            if !valid_dep_spec(dj.at(i).as_string_or("")) {
+                panic(err("dependency must look like name@1.2.3", 214, file))
+            }
+        }
+        item.set("deps", dj.cp())
+    }
+
+    step(2, 3, "merging into the entry")
+    set rel = entry_rel(name)
+    set seq: int64 = 1
+    set versions = json_array([])
+    if file_exists(rel) {
+        set old = json_parse(file_read_text(rel))
+        rewrite seq = old.get("seq").as_int() + 1
+        set ov = old.get("versions")
+        for i in 0..ov.len() {
+            if eq(ov.at(i).get("version").as_string(), version) {
+                panic(err("version " + version + " already exists: published releases are immutable", 212, rel))
+            }
+            versions.push(ov.at(i).cp())
+        }
+    }
+    versions.push(item)
+
+    step(3, 3, "signing with " + c_accent(keyname))
+    write_entry(name, seq, versions, keyname, kind, rj.get("summary").as_string_or(""), rj.get("homepage").as_string_or(""), rj.get("license").as_string_or(""), false)
+    info("next: git add index && git commit -S -m \"" + name + " " + version + "\" && open a pull request")
+}
+
+// ── index check (CI) ────────────────────────────────────────────────────
+
+fun stem_of(path: string) -> string {
+    return path_file_stem(path)
+}
+
+public fun cmd_index_check(download: bool) {
+    need_checkout()
+    set all = dir_walk("index")
+    set problems: int64 = 0
+    set checked: int64 = 0
+    for i in 0..all.len() {
+        set p = all[i]
+        if !ends_with(p, ".json") {
+            continue
+        }
+        set name = stem_of(p)
+        if !valid_name(name) || !ends_with(p, entry_rel(name)) {
+            bad(p + ": the path does not match the package name")
+            rewrite problems += 1
+            continue
+        }
+        if !file_exists(p + ".sig") {
+            bad(p + ": missing .sig")
+            rewrite problems += 1
+            continue
+        }
+        set text = file_read_text(p)
+        set sig = trim(file_read_text(p + ".sig"))
+        if !json_validate(text) {
+            bad(p + ": not valid JSON")
+            rewrite problems += 1
+            continue
+        }
+        set doc = json_parse(text)
+        if doc.get("expires").as_int() - now_secs() < RENEW_WARN {
+            bad(p + ": expires in less than 30 days: run `yuki renew " + name + " <key>`")
+            rewrite problems += 1
+        }
+        set vs = doc.get("versions")
+        for k in 0..vs.len() {
+            if vs.at(k).get("yanked").as_bool_or(false) {
+                continue
+            }
+            set ver = vs.at(k).get("version").as_string_or("")
+            sus {
+                set rel = resolve_text(name, ver, text, sig, false)
+                for d in 0..rel.deps.len() {
+                    if !file_exists(entry_rel(dep_name(rel.deps[d]))) {
+                        panic(err("dependency " + rel.deps[d] + " is not in this index", 214, p))
+                    }
+                }
+                set tg = vs.at(k).get("targets")
+                for t in 0..tg.len() {
+                    set tname = tg.at(t).as_string_or("")
+                    set bu = vs.at(k).get("bin").get(tname).get("url").as_string_or("")
+                    set bc = vs.at(k).get("bin").get(tname).get("checksum").as_string_or("")
+                    check_url(bu)
+                    if !checksum_ok_format(bc) {
+                        panic(err("bad checksum for target " + tname, 209, p))
+                    }
+                    if download && !eq(fetch_unpinned(bu), bc) {
+                        panic(err("the download does not match the checksum for target " + tname, 207, p))
+                    }
+                }
+                if download && eq(rel.kind, "lib") && !eq(fetch_unpinned(rel.url), rel.checksum) {
+                    panic(err("the download does not match the checksum", 207, p))
+                }
+                if download && rel.src_url.len() > 0 && !eq(fetch_unpinned(rel.src_url), rel.src_checksum) {
+                    panic(err("the source download does not match the checksum", 207, p))
+                }
+                rewrite checked += 1
+            } catch e: YukiError {
+                bad(p + " " + ver + ": " + e.message)
+                rewrite problems += 1
+            } catch e: VerifyError {
+                bad(p + " " + ver + ": " + e.message)
+                rewrite problems += 1
+            } catch {
+                bad(p + " " + ver + ": " + errkind)
+                rewrite problems += 1
+            }
+        }
+    }
+    if problems > 0 {
+        panic(err(cast(problems, "string") + " problem(s) in the index", 213, "index"))
+    }
+    ok("index is healthy " + c_dim(cast(checked, "string") + " release(s) verified"))
+}
+
+// ── catalog ─────────────────────────────────────────────────────────────
+
+public fun cmd_index_catalog(keyname: string) {
+    need_checkout()
+    set all = dir_walk("index")
+    set pk = json_array([])
+    for i in 0..all.len() {
+        set p = all[i]
+        if !ends_with(p, ".json") {
+            continue
+        }
+        set doc = json_parse(file_read_text(p))
+        set vs = doc.get("versions")
+        set best = ""
+        for k in 0..vs.len() {
+            if !vs.at(k).get("yanked").as_bool_or(false) {
+                set v = vs.at(k).get("version").as_string_or("")
+                if valid_version(v) && (best.len() == 0 || ver_cmp(v, best) > 0) {
+                    rewrite best = v
+                }
+            }
+        }
+        if best.len() > 0 {
+            set o = json_object()
+            o.set("name", json_string(doc.get("name").as_string_or("")))
+            o.set("kind", json_string(doc.get("kind").as_string_or("lib")))
+            o.set("version", json_string(best))
+            o.set("summary", json_string(doc.get("summary").as_string_or("")))
+            pk.push(o)
+        }
+    }
+    set seq: int64 = 1
+    if file_exists("catalog.json") {
+        rewrite seq = json_parse(file_read_text("catalog.json")).get("seq").as_int() + 1
+    }
+    set root = json_object()
+    root.set("seq", json_int(seq))
+    root.set("expires", json_int(now_secs() + ENTRY_LIFETIME))
+    root.set("packages", pk)
+    set text = json_pretty(root) + "\n"
+    file_write_text("catalog.json", text)
+    file_write_text("catalog.json.sig", sign_text(keyname, text) + "\n")
+    ok("wrote catalog.json and .sig " + c_dim(cast(pk.len(), "string") + " packages, seq " + cast(seq, "string")))
+}
+
+// ── renew-all ───────────────────────────────────────────────────────────
+
+public fun cmd_index_renew_all(keyname: string, days: int64) {
+    need_checkout()
+    set all = dir_walk("index")
+    set renewed: int64 = 0
+    for i in 0..all.len() {
+        set p = all[i]
+        if !ends_with(p, ".json") {
+            continue
+        }
+        set doc = json_parse(file_read_text(p))
+        if doc.get("expires").as_int() - now_secs() < days * 86400 {
+            set versions = json_array([])
+            set vs = doc.get("versions")
+            for k in 0..vs.len() {
+                versions.push(vs.at(k).cp())
+            }
+            write_entry(doc.get("name").as_string(), doc.get("seq").as_int() + 1, versions, keyname, "", "", "", "", true)
+            rewrite renewed += 1
+        }
+    }
+    ok("renewed " + cast(renewed, "string") + " entr" + "ies")
+}
+
+// ── cosign: второй (третий…) издатель подтверждает содержимое ──────────
+
+public fun cmd_index_cosign(name: string, keyname: string) {
+    need_checkout()
+    set rel = entry_rel(name)
+    if !valid_name(name) || !file_exists(rel) {
+        panic(err("no such package in this index checkout: " + name, 201, rel))
+    }
+    set old = json_parse(file_read_text(rel))
+    set myp = pubkey_of(keyname)
+    set vtext = "content\n" + json_stringify(old.get("versions").cp())
+    set csigs = json_array([])
+    set present = false
+    set oc = old.get("content_sigs")
+    for i in 0..oc.len() {
+        csigs.push(oc.at(i).cp())
+        if eq(oc.at(i).get("key").as_string_or(""), myp) {
+            rewrite present = true
+        }
+    }
+    if present {
+        panic(err("this key has already signed the content", 605, rel))
+    }
+    set me = json_object()
+    me.set("key", json_string(myp))
+    me.set("sig", json_string(sign_text(keyname, vtext)))
+    csigs.push(me)
+
+    set root = json_object()
+    root.set("name", json_string(name))
+    root.set("kind", json_string(old.get("kind").as_string_or("lib")))
+    if old.get("summary").as_string_or("").len() > 0 {
+        root.set("summary", json_string(old.get("summary").as_string_or("")))
+    }
+    if old.get("homepage").as_string_or("").len() > 0 {
+        root.set("homepage", json_string(old.get("homepage").as_string_or("")))
+    }
+    if old.get("license").as_string_or("").len() > 0 {
+        root.set("license", json_string(old.get("license").as_string_or("")))
+    }
+    root.set("seq", json_int(old.get("seq").as_int()))
+    root.set("expires", json_int(old.get("expires").as_int()))
+    root.set("versions", old.get("versions").cp())
+    root.set("content_sigs", csigs)
+    set text = json_pretty(root) + "\n"
+    file_write_text(rel, text)
+    file_write_text(rel + ".sig", myp + " " + sign_text(keyname, text) + "\n")
+    ok("co-signed " + c_accent(rel) + " " + c_dim(cast(csigs.len(), "string") + " publisher signature(s)"))
+}

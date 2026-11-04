@@ -1,0 +1,32 @@
+name: verify index
+on:
+  pull_request:
+    paths: ['index/**', 'catalog.json*', 'keys/**']
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+      - name: Install yuki (pinned)
+        env:
+          YUKI_URL: https://github.com/YOU/yuki/releases/download/v0.1.0/yuki-linux-x86_64   # <- ваш релиз
+          YUKI_B3: "REPLACE-WITH-BLAKE3-OF-THE-BINARY"
+        run: |
+          curl -fsSL "$YUKI_URL" -o yuki
+          chmod +x yuki && sudo mv yuki /usr/local/bin/yuki
+          yuki verify /usr/local/bin/yuki "blake3:$YUKI_B3"
+      - name: Trust only the keys from the base branch
+        run: |
+          mkdir -p ci/config ci/state
+          git show origin/${{ github.base_ref }}:keys/trusted_keys > ci/config/trusted_keys
+      - name: Published releases are immutable
+        run: scripts/immutable.sh origin/${{ github.base_ref }}
+      - name: Check signatures, fields, dependencies and downloads
+        env:
+          YUKI_CONFIG_DIR: ${{ github.workspace }}/ci/config
+          YUKI_STATE_DIR: ${{ github.workspace }}/ci/state
+          YUKI_CACHE_DIR: ${{ github.workspace }}/ci/cache
+        run: yuki index check download

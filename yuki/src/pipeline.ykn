@@ -1,0 +1,113 @@
+// pipeline.ykn — «скачать → сверить хеш → проверить архив → положить в кэш».
+// Кэш содержимо-адресуемый: <cache>/<blake3-hex><расширение>. Каждый файл
+// проходит проверку при каждом использовании, так что подмена кэша не страшна.
+
+load std.fs.files: file_exists, file_remove, file_rename, file_size
+load std.fs.paths: path_join
+load std.hash.blake3: blake3_file
+load std.stdotool.format: format_bytes
+load std.strings: ends_with, slice, lower
+load .errors: YukiError, err
+load .config: cache_dir, ensure_dirs, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, MAX_DOWNLOAD
+load .fetch: download, check_url
+load .verify: VerifyError, check_blake3, audit_tar, checksum_ok_format
+
+public struct Fetched {
+    path: string
+    bytes: int64
+    cached: bool
+}
+
+public fun archive_ext(url: string) -> string {
+    if ends_with(url, ".tar.zst") {
+        return ".tar.zst"
+    }
+    if ends_with(url, ".tar.gz") || ends_with(url, ".tgz") {
+        return ".tar.gz"
+    }
+    if ends_with(url, ".tar.xz") {
+        return ".tar.xz"
+    }
+    if ends_with(url, ".tar") {
+        return ".tar"
+    }
+    panic(err("unsupported archive type (expected .tar, .tar.gz, .tar.xz or .tar.zst)", 410, url))
+}
+
+// Проверить уже лежащий в кэше файл. true — можно использовать.
+fun cache_hit(path: string, checksum: string) -> bool {
+    if !file_exists(path) {
+        return false
+    }
+    set good = false
+    sus {
+        check_blake3(path, checksum)
+        rewrite good = true
+    } catch e: VerifyError {
+        file_remove(path)
+    }
+    return good
+}
+
+// Проверенный архив в кэше. node — номер узла в панели (или -1, если панели нет).
+public fun fetch_verified(url: string, checksum: string, label: string, prog_path: string) -> Fetched {
+    if !checksum_ok_format(checksum) {
+        panic(err("malformed checksum", 411, url))
+    }
+    check_url(url)
+    ensure_dirs()
+
+    set hex = lower(slice(checksum, 7, 71))
+    set ext = archive_ext(url)
+    set final_path = path_join(cache_dir(), hex + ext)
+
+    if cache_hit(final_path, checksum) {
+        return Fetched { path: final_path, bytes: file_size(final_path), cached: true }
+    }
+
+    set part = path_join(cache_dir(), hex + ".part" + ext)
+    if file_exists(part) {
+        file_remove(part)
+    }
+
+    set size = download(url, part, MAX_DOWNLOAD, prog_path)
+
+    sus {
+        check_blake3(part, checksum)
+        audit_tar(part, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, false)
+    } catch e: VerifyError {
+        file_remove(part)
+        panic(e)
+    } catch {
+        file_remove(part)
+        panic(err("verification failed: " + errkind, 412, part))
+    }
+
+    file_rename(part, final_path)
+    return Fetched { path: final_path, bytes: size, cached: false }
+}
+
+// Для publish: скачать архив, проверить его и вернуть "blake3:<hex>" без заранее известного хеша.
+public fun fetch_unpinned(url: string) -> string {
+    check_url(url)
+    ensure_dirs()
+    set ext = archive_ext(url)
+    set tmp = path_join(cache_dir(), "publish.part" + ext)
+    if file_exists(tmp) {
+        file_remove(tmp)
+    }
+    download(url, tmp, MAX_DOWNLOAD, "")
+    set hex = ""
+    sus {
+        audit_tar(tmp, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, false)
+        rewrite hex = lower(blake3_file(tmp))
+    } catch e: VerifyError {
+        file_remove(tmp)
+        panic(e)
+    } catch {
+        file_remove(tmp)
+        panic(err("verification failed: " + errkind, 412, tmp))
+    }
+    file_rename(tmp, path_join(cache_dir(), hex + ext))
+    return "blake3:" + hex
+}

@@ -1,0 +1,238 @@
+// trust.ykn — хранилище доверенных ключей реестра и ключи подписи.
+//   <config>/trusted_keys   строки "<имя> <ed25519 pubkey hex>"
+//   <config>/keys/<имя>.seed  приватный seed (каталог 0700, файл 0600)
+
+load std.io: print, println, read_line
+load std.fs.dirs: dir_create_all
+load std.fs.files: file_exists, file_read_text, file_write_text, file_append_text, file_set_permissions
+load std.fs.paths: path_join
+load std.strings: lines, split, trim, eq, lower, slice, str_join, parse_int
+load std.hash: hex_to_bytes, bytes_to_hex, blake3_str
+load std.crypto: ed25519_public_key, ed25519_sign, random_bytes
+load .errors: YukiError, err
+load .config: config_dir, ensure_dirs
+load .util: is_hex, valid_name
+load .verify: signed_message
+
+fun trust_file() -> string {
+    return path_join(config_dir(), "trusted_keys")
+}
+
+fun keys_dir() -> string {
+    return path_join(config_dir(), "keys")
+}
+
+fun revoked_file() -> string {
+    return path_join(config_dir(), "revoked_keys")
+}
+
+public fun is_revoked(pubkey_hex: string) -> bool {
+    set f = revoked_file()
+    if !file_exists(f) {
+        return false
+    }
+    set ls = lines(file_read_text(f))
+    for i in 0..ls.len() {
+        if eq(lower(trim(ls[i])), lower(pubkey_hex)) {
+            return true
+        }
+    }
+    return false
+}
+
+// Доверенные ключи без отозванных (отозванный ключ не вернётся даже из файла).
+public fun trusted_keys() -> string[] {
+    set out: string[] = []
+    set f = trust_file()
+    if file_exists(f) {
+        set ls = lines(file_read_text(f))
+        for i in 0..ls.len() {
+            set parts = split(trim(ls[i]), " ")
+            if parts.len() >= 2 && parts[1].len() == 64 && is_hex(parts[1]) && !is_revoked(parts[1]) {
+                out.push(lower(parts[1]))
+            }
+        }
+    }
+    return out
+}
+
+// Сколько разных доверенных ключей должны подписать ротацию (файл <config>/threshold, по умолчанию 1).
+public fun threshold() -> int64 {
+    set f = path_join(config_dir(), "threshold")
+    if file_exists(f) {
+        set n: int64 = parse_int(trim(file_read_text(f))) ?? 1
+        if n >= 1 && n <= 16 {
+            return n
+        }
+    }
+    return 1
+}
+
+public fun revoke_key(pubkey_hex: string) {
+    set key = lower(pubkey_hex)
+    if !is_revoked(key) {
+        file_append_text(revoked_file(), key + "\n")
+    }
+    set f = trust_file()
+    if file_exists(f) {
+        set out: string[] = []
+        set ls = lines(file_read_text(f))
+        for i in 0..ls.len() {
+            set parts = split(trim(ls[i]), " ")
+            if !(parts.len() >= 2 && eq(lower(parts[1]), key)) && trim(ls[i]).len() > 0 {
+                out.push(trim(ls[i]))
+            }
+        }
+        file_write_text(f, str_join(out, "\n") + "\n")
+    }
+}
+
+public fun trusted_names() -> string[] {
+    set out: string[] = []
+    set f = trust_file()
+    if file_exists(f) {
+        set ls = lines(file_read_text(f))
+        for i in 0..ls.len() {
+            set parts = split(trim(ls[i]), " ")
+            if parts.len() >= 2 && parts[1].len() == 64 && is_hex(parts[1]) && !is_revoked(parts[1]) {
+                out.push(parts[0])
+            }
+        }
+    }
+    return out
+}
+
+// Роль ключа: "publisher" (подтверждает содержимое записей) или "renewer" (может лишь продлевать срок).
+// Параллельно trusted_keys().
+public fun trusted_roles() -> string[] {
+    set out: string[] = []
+    set f = trust_file()
+    if file_exists(f) {
+        set ls = lines(file_read_text(f))
+        for i in 0..ls.len() {
+            set parts = split(trim(ls[i]), " ")
+            if parts.len() >= 2 && parts[1].len() == 64 && is_hex(parts[1]) && !is_revoked(parts[1]) {
+                if parts.len() >= 3 && eq(parts[2], "renewer") {
+                    out.push("renewer")
+                } else {
+                    out.push("publisher")
+                }
+            }
+        }
+    }
+    return out
+}
+
+// Сколько разных издателей должны подтвердить содержимое записи (файл <config>/publish_threshold, по умолчанию 1).
+public fun publish_threshold() -> int64 {
+    set f = path_join(config_dir(), "publish_threshold")
+    if file_exists(f) {
+        set n: int64 = parse_int(trim(file_read_text(f))) ?? 1
+        if n >= 1 && n <= 8 {
+            return n
+        }
+    }
+    return 1
+}
+
+// Отпечаток для сверки глазами: первые 16 hex от BLAKE3(pubkey_hex).
+public fun fingerprint(pubkey_hex: string) -> string {
+    set h = blake3_str(lower(pubkey_hex))
+    return slice(h, 0, 4) + " " + slice(h, 4, 8) + " " + slice(h, 8, 12) + " " + slice(h, 12, 16)
+}
+
+public fun trust_add(name: string, pubkey_hex: string, role: string, assume_yes: bool) {
+    if !eq(role, "publisher") && !eq(role, "renewer") {
+        panic(err("role must be publisher or renewer", 601, name))
+    }
+    if !valid_name(name) {
+        panic(err("invalid key name: " + name, 601, name))
+    }
+    if pubkey_hex.len() != 64 || !is_hex(pubkey_hex) {
+        panic(err("public key must be 64 hex characters", 601, name))
+    }
+    set key = lower(pubkey_hex)
+    if is_revoked(key) {
+        panic(err("this key was revoked and cannot be trusted again", 606, name))
+    }
+    set names = trusted_names()
+    set keys = trusted_keys()
+    for i in 0..keys.len() {
+        if eq(keys[i], key) || eq(names[i], name) {
+            panic(err("this key or name is already trusted", 605, name))
+        }
+    }
+    println("  fingerprint  " + fingerprint(key))
+    println("  key          " + key)
+    println("  role         " + role)
+    if !assume_yes {
+        print("  trust this key for signing index entries? [y/N] ")
+        set answer = lower(trim(read_line()))
+        if !eq(answer, "y") && !eq(answer, "yes") {
+            panic(err("aborted: key was not trusted", 603, name))
+        }
+    }
+    ensure_dirs()
+    file_append_text(trust_file(), name + " " + key + " " + role + "\n")
+}
+
+public fun trust_remove(name: string) -> bool {
+    set f = trust_file()
+    if !file_exists(f) {
+        return false
+    }
+    set out: string[] = []
+    set found = false
+    set ls = lines(file_read_text(f))
+    for i in 0..ls.len() {
+        set parts = split(trim(ls[i]), " ")
+        if parts.len() >= 2 && eq(parts[0], name) {
+            rewrite found = true
+        } elif trim(ls[i]).len() > 0 {
+            out.push(trim(ls[i]))
+        }
+    }
+    file_write_text(f, str_join(out, "\n") + "\n")
+    return found
+}
+
+// Новый ключ подписи. Возвращает публичный ключ (hex).
+public fun keygen(name: string) -> string {
+    if !valid_name(name) {
+        panic(err("invalid key name: " + name, 601, name))
+    }
+    ensure_dirs()
+    set kd = keys_dir()
+    dir_create_all(kd)
+    file_set_permissions(kd, 448)
+    set path = path_join(kd, name + ".seed")
+    if file_exists(path) {
+        panic(err("key already exists", 602, path))
+    }
+    set seed: bytes = random_bytes(32)
+    set pubk: bytes = ed25519_public_key(ref seed)
+    file_write_text(path, bytes_to_hex(ref seed) + "\n")
+    file_set_permissions(path, 384)
+    return bytes_to_hex(ref pubk)
+}
+
+fun read_seed(name: string) -> bytes {
+    set path = path_join(keys_dir(), name + ".seed")
+    if !valid_name(name) || !file_exists(path) {
+        panic(err("no such signing key: " + name, 604, path))
+    }
+    return hex_to_bytes(trim(file_read_text(path)))
+}
+
+public fun pubkey_of(name: string) -> string {
+    set seed: bytes = read_seed(name)
+    set pubk: bytes = ed25519_public_key(ref seed)
+    return bytes_to_hex(ref pubk)
+}
+
+public fun sign_text(name: string, text: string) -> string {
+    set seed: bytes = read_seed(name)
+    set msg: bytes = cast(signed_message(text), "bytes")
+    set sig: bytes = ed25519_sign(ref seed, ref msg)
+    return bytes_to_hex(ref sig)
+}

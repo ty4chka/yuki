@@ -1,0 +1,37 @@
+name: renew entries
+on:
+  schedule: [{ cron: '0 5 1 * *' }]       # раз в месяц
+  workflow_dispatch: {}
+permissions:
+  contents: write
+  pull-requests: write
+jobs:
+  renew:
+    runs-on: ubuntu-latest
+    environment: signing                   # защищённое окружение GitHub с ручным одобрением
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install yuki (pinned)
+        env:
+          YUKI_URL: https://github.com/YOU/yuki/releases/download/v0.1.0/yuki-linux-x86_64
+          YUKI_B3: "REPLACE-WITH-BLAKE3-OF-THE-BINARY"
+        run: |
+          curl -fsSL "$YUKI_URL" -o yuki
+          chmod +x yuki && sudo mv yuki /usr/local/bin/yuki
+          yuki verify /usr/local/bin/yuki "blake3:$YUKI_B3"
+      - name: Load the renew-only key
+        env:
+          RENEW_SEED: ${{ secrets.YUKI_RENEW_SEED }}
+        run: |
+          mkdir -p ~/.config/yuki/keys && chmod 700 ~/.config/yuki/keys
+          umask 077 && echo "$RENEW_SEED" > ~/.config/yuki/keys/renew.seed
+      - name: Renew entries that expire within 30 days and rebuild the catalog
+        run: |
+          yuki index renew-all renew 30
+          yuki index catalog renew
+      - name: Open a pull request
+        uses: peter-evans/create-pull-request@v6
+        with:
+          title: "renew: extend entries"
+          branch: bot/renew
+          commit-message: "renew: extend entries"

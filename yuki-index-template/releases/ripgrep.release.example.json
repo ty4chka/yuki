@@ -1,0 +1,18 @@
+{
+  "name": "ripgrep",
+  "kind": "app",
+  "version": "14.1.0",
+  "summary": "line-oriented search tool",
+  "homepage": "https://github.com/BurntSushi/ripgrep",
+  "license": "MIT",
+  "bin": [
+    { "target": "linux-x86_64", "url": "https://github.com/YOU/yuki-packages/releases/download/ripgrep-14.1.0/ripgrep-14.1.0-linux-x86_64.tar.zst" }
+  ],
+  "src": {
+    "url": "https://github.com/BurntSushi/ripgrep/archive/refs/tags/14.1.0.tar.gz",
+    "net": false,
+    "build": ["yukino", "build", "--release"],
+    "files": [ { "from": "target/release/rg", "to": "usr/bin/rg", "mode": "755" } ]
+  },
+  "deps": []
+}

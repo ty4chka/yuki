@@ -1,0 +1,148 @@
+// config.ykn — пути, адрес индекса, allow-list хостов, лимиты.
+
+load std.fs.defaults: dir_app_config, dir_app_cache, dir_app_data
+load std.fs.dirs: dir_create_all
+load std.fs.files: file_exists, file_read_text
+load std.fs.paths: path_join
+load std.env: get_env, get_or
+load std.sysinfo: os_name, cpu_arch
+load std.strings: trim, lines, eq, lower, ends_with, slice, contains, split, str_join
+load .errors: YukiError, err
+
+public static MAX_ENTRIES: int64 = 20000
+public static MAX_TOTAL: int64 = 536870912     // 512 MiB после распаковки
+public static MAX_FILE: int64 = 134217728      // 128 MiB на файл
+public static MAX_DOWNLOAD: int64 = 268435456  // 256 MiB архив
+public static MAX_INDEX_FILE: int64 = 1048576  // 1 MiB запись индекса
+
+// Системный режим (install/uninstall/upgrade…): всё лежит в корневых каталогах,
+// куда обычный пользователь и непривилегированная фаза писать не могут.
+public fun system_mode() -> bool {
+    return eq(get_or("YUKI_SYSTEM", ""), "1")
+}
+
+public fun config_dir() -> string {
+    set o = get_or("YUKI_CONFIG_DIR", "")
+    if o.len() > 0 {
+        return o
+    }
+    if system_mode() {
+        return "/etc/yuki"
+    }
+    return dir_app_config("yuki")
+}
+
+public fun cache_dir() -> string {
+    set o = get_or("YUKI_CACHE_DIR", "")
+    if o.len() > 0 {
+        return o
+    }
+    if system_mode() {
+        return "/var/cache/yuki"
+    }
+    return dir_app_cache("yuki")
+}
+
+public fun state_dir() -> string {
+    set o = get_or("YUKI_STATE_DIR", "")
+    if o.len() > 0 {
+        return o
+    }
+    if system_mode() {
+        return "/var/lib/yuki"
+    }
+    return dir_app_data("yuki")
+}
+
+// "linux-x86_64": по этой строке выбирается готовая сборка в индексе.
+// Имена приводятся к единому виду (amd64 → x86_64, arm64 → aarch64), YUKI_TARGET переопределяет.
+public fun host_target() -> string {
+    set forced = lower(trim(get_or("YUKI_TARGET", "")))
+    if forced.len() > 0 {
+        return forced
+    }
+    set os = lower(os_name())
+    if contains(os, "linux") {
+        rewrite os = "linux"
+    } elif contains(os, "darwin") || contains(os, "mac") {
+        rewrite os = "macos"
+    } elif contains(os, "windows") {
+        rewrite os = "windows"
+    } elif contains(os, "bsd") {
+        rewrite os = "freebsd"
+    }
+    set cpu = lower(cpu_arch())
+    if eq(cpu, "amd64") || eq(cpu, "x64") || eq(cpu, "x86_64") || eq(cpu, "x86-64") {
+        rewrite cpu = "x86_64"
+    } elif eq(cpu, "arm64") || eq(cpu, "aarch64") || eq(cpu, "armv8") {
+        rewrite cpu = "aarch64"
+    } elif eq(cpu, "i386") || eq(cpu, "i686") || eq(cpu, "x86") {
+        rewrite cpu = "x86"
+    } elif contains(cpu, "armv7") || eq(cpu, "arm") {
+        rewrite cpu = "armv7"
+    }
+    return os + "-" + cpu
+}
+
+public fun ensure_dirs() {
+    dir_create_all(config_dir())
+    dir_create_all(cache_dir())
+    dir_create_all(state_dir())
+}
+
+// Адреса индекса: YUKI_INDEX (через запятую) или строки файла <config>/index_url.
+// Первый основной, остальные зеркала: если основной недоступен, клиент пробует следующие.
+// Зеркало не обязано быть доверенным: подписи проверяются одни и те же.
+public fun index_urls() -> string[] {
+    set raw = trim(get_or("YUKI_INDEX", ""))
+    if raw.len() == 0 {
+        set f = path_join(config_dir(), "index_url")
+        if file_exists(f) {
+            rewrite raw = trim(file_read_text(f))
+        }
+    }
+    set out: string[] = []
+    set parts = split(replace_commas(raw), "\n")
+    for i in 0..parts.len() {
+        set u = trim(parts[i])
+        if ends_with(u, "/") {
+            rewrite u = slice(u, 0, u.len() - 1)
+        }
+        if u.len() > 0 {
+            out.push(u)
+        }
+    }
+    if out.len() == 0 {
+        panic(err("no index configured: set YUKI_INDEX or write the URL to <config>/index_url", 101, ""))
+    }
+    return out
+}
+
+fun replace_commas(s: string) -> string {
+    return str_join(split(s, ","), "\n")
+}
+
+public fun index_url() -> string {
+    return index_urls()[0]
+}
+
+// Скачивать можно только с этих хостов (плюс строки из <config>/allowed_hosts).
+public fun host_allowed(host: string) -> bool {
+    set h = lower(host)
+    if eq(h, "github.com") || eq(h, "codeload.github.com") || eq(h, "raw.githubusercontent.com") {
+        return true
+    }
+    if eq(h, "objects.githubusercontent.com") || eq(h, "gitlab.com") || eq(h, "codeberg.org") {
+        return true
+    }
+    set extra = path_join(config_dir(), "allowed_hosts")
+    if file_exists(extra) {
+        set ls = lines(file_read_text(extra))
+        for i in 0..ls.len() {
+            if eq(lower(trim(ls[i])), h) {
+                return true
+            }
+        }
+    }
+    return false
+}

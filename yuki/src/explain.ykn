@@ -1,0 +1,93 @@
+// explain.ykn — подсказки к ошибкам.
+//   hint_line(code)   одна строка help, которая печатается под ошибкой
+//   explain_lines(code) подробный разбор для `yuki explain Y0301`
+// Каждая ошибка отвечает на три вопроса: что случилось, почему, что делать.
+
+fun mk(title: string, why: string, fix: string) -> string[] {
+    return [title, why, fix]
+}
+
+public fun explain_lines(code: int64) -> string[] {
+    if code == 101 { return mk("No index is configured", "yuki needs to know where the signed index lives.", "Set YUKI_INDEX=https://raw.githubusercontent.com/<org>/<repo>/main or write the URL to <config>/index_url.") }
+    if code == 201 { return mk("Invalid package name", "Names are 1-64 chars of a-z, 0-9, _ and -, not starting with - or _.", "Check the spelling; `yuki search <word>` finds packages.") }
+    if code == 202 { return mk("No trusted keys", "Nothing can be verified until you trust the registry key.", "Get the public key from the registry owner, compare the fingerprint, then `yuki keys trust <name> <pubkey>` (sudo for system installs).") }
+    if code == 203 { return mk("Index entry belongs to another package", "The signed file names a different package than the one requested.", "The index is damaged or someone swapped files. Do not install; report it to the registry owner.") }
+    if code == 204 { return mk("Index entry has expired", "Every entry carries an expiry date so a frozen mirror cannot serve old data forever.", "A maintainer must run `yuki renew <pkg> <key>` (or the scheduled renew job). Until then installs are blocked on purpose.") }
+    if code == 205 { return mk("Rollback detected", "The entry is older than one you have already accepted. This is how a downgrade attack looks.", "Do not install. Retry later; if it persists, the mirror or your network is serving stale data. Report it.") }
+    if code == 206 { return mk("No matching release", "The package or the requested version does not exist, or it was yanked.", "Check the version, try `yuki show <pkg>` for what is available, or `yuki search <word>`.") }
+    if code == 207 { return mk("Release changed without a version bump", "A published version must never change. Same version, different checksum.", "Treat as a compromise: do not update, run `yuki audit`, and tell the maintainers.") }
+    if code == 208 { return mk("Release URL is not allowed", "URLs must be https, without a port, and on an allowed host.", "Add the host to <config>/allowed_hosts only if you trust it.") }
+    if code == 209 { return mk("Malformed checksum", "Checksums look like blake3:<64 hex>.", "Regenerate the entry with `yuki index add`.") }
+    if code == 210 { return mk("Bad version", "Versions are MAJOR.MINOR.PATCH, digits only.", "Use something like 1.2.3.") }
+    if code == 211 { return mk("Not inside an index checkout", "Maintainer commands need the ./index directory of the index repository.", "cd into your clone of the index repo first.") }
+    if code == 212 { return mk("Version already published", "Published releases are immutable.", "Bump the version instead of republishing.") }
+    if code == 213 { return mk("Audit found problems", "Some dependencies no longer match the signed index.", "Read the lines above, then `yuki update <name>` or remove the dependency.") }
+    if code == 214 { return mk("Bad dependency list", "Dependencies must be exact pins like name@1.2.3 (max 64).", "Fix the release file and run `yuki index add` again.") }
+    if code == 215 { return mk("Dependency chain too deep", "Chains are limited to 16 levels.", "Flatten the dependency chain.") }
+    if code == 216 { return mk("Too many packages", "A single install is limited to 256 (system: 128) packages.", "Split the install or reduce dependencies.") }
+    if code == 217 { return mk("Version conflict", "Two packages require different exact versions of the same dependency.", "Pin one of them in the index so both agree.") }
+    if code == 218 { return mk("Unknown package kind", "kind must be lib or app.", "Fix the entry.") }
+    if code == 219 { return mk("Bad binary or source release", "A bin/src block has a bad URL or checksum.", "Rebuild the entry with `yuki index add`.") }
+    if code == 220 || code == 221 { return mk("Bad build description", "build needs 1-16 plain arguments; files needs 1-256 safe from/to paths with mode 644 or 755.", "Fix the release json and re-add it.") }
+    if code == 301 { return mk("Checksum mismatch", "The downloaded file does not match the blake3 in the signed index. It was changed in transit or at the source.", "Do not use the file. Retry once; if it repeats, the source was tampered with or the index entry is wrong.") }
+    if code == 302 { return mk("Malformed checksum", "Expected blake3:<64 hex>, the format yukino uses in [libs.runtime].", "Copy the checksum exactly.") }
+    if code == 303 { return mk("Signature is not valid", "No trusted key produced a valid signature for this data.", "Check `yuki keys list`; refresh keys with `sudo yuki keys refresh`; otherwise the data is forged.") }
+    if code == 304 { return mk("Unsafe path in archive", "The archive tries to write outside its directory (.. or absolute path).", "Do not use this archive. Report it.") }
+    if code == 305 { return mk("Links or special files in archive", "Symlinks, devices and setuid files are not allowed.", "Repack the package without them.") }
+    if code == 306 { return mk("Size limit exceeded", "Entries, total size or one file exceed the limits (zip-bomb protection).", "Limits are in config.ykn.") }
+    if code == 401 || code == 402 { return mk("URL not allowed", "Only plain https://host/path URLs are accepted.", "Fix the URL in the index entry.") }
+    if code == 403 { return mk("Host is not allowed", "Downloads are limited to an allow-list of hosts.", "Add the host to <config>/allowed_hosts if you trust it.") }
+    if code == 404 { return mk("Server answered with an error", "The download URL returned a non-200 status.", "Check the URL in the release; the file may have been removed.") }
+    if code == 405 { return mk("Redirect problem", "Too many redirects or a redirect to an unsupported place.", "Use a direct URL.") }
+    if code == 406 || code == 407 || code == 408 { return mk("Bad or oversized response", "The server sent something yuki refuses to process or cut the connection.", "Retry; check your network and proxy.") }
+    if code == 410 { return mk("Unsupported archive type", "Expected .tar, .tar.gz, .tar.xz or .tar.zst.", "Repack the release.") }
+    if code == 412 { return mk("Verification failed", "Checking the downloaded file failed.", "Retry; if it repeats the file is bad.") }
+    if code == 501 { return mk("yuki.toml not found", "Project commands run inside a project folder.", "cd into the project or create yuki.toml with `yukino new`.") }
+    if code == 601 || code == 602 { return mk("Key problem", "Names are lowercase with - and _; a key with this name may already exist.", "Pick another name or inspect `yuki keys list`.") }
+    if code == 603 { return mk("Key not trusted", "You declined the fingerprint prompt.", "Verify the fingerprint with the owner, then run the command again.") }
+    if code == 604 { return mk("No such signing key", "The secret key file does not exist.", "Create one with `yuki keys gen <name>`.") }
+    if code == 605 { return mk("Key already trusted", "That key or name is already in the trust list.", "Nothing to do.") }
+    if code == 606 { return mk("Key was revoked", "A signed rotation revoked this key.", "Ask the owner for the new key.") }
+    if code == 701 || code == 702 { return mk("Could not drop privileges", "The helper process failed to give up root.", "Nothing was changed. Check that you are on Linux and not in a restricted container.") }
+    if code == 703 { return mk("fork failed", "The system refused to start the helper.", "Free some resources and retry.") }
+    if code == 710 { return mk("Package is not installed", "The database has no such package.", "`yuki list` shows what is installed.") }
+    if code == 720 || code == 721 { return mk("Package breaks the install policy", "System packages may only write under usr/, opt/ and etc/, never to protected paths, and may not contain symlinks.", "Repackage; if you are the maintainer, move the files.") }
+    if code == 722 { return mk("File conflict", "A file already exists and belongs to another package or to nobody.", "Remove the other package, or retry with --overwrite if you are sure.") }
+    if code == 723 { return mk("File changed during install", "A file differed from its hash after copying.", "Retry; if it repeats, the disk or a local process is interfering.") }
+    if code == 730 { return mk("Another yuki is running", "A lock directory exists.", "Wait for it. If nothing is running, the stale lock is cleaned automatically on the next run.") }
+    if code == 731 { return mk("Nothing to roll back", "No committed transaction or journal found.", "`yuki history` lists transactions.") }
+    if code == 732 { return mk("Transaction failed and was rolled back", "Something went wrong half-way; the journal restored the previous state.", "Read the error above it, fix the cause, retry.") }
+    if code == 733 { return mk("Package is required", "Other installed packages depend on it.", "Remove them first or use --force.") }
+    if code == 740 { return mk("Index entry was not fetched", "The helper did not bring an entry that the plan needs.", "Retry.") }
+    if code == 741 { return mk("This is a library", "Libraries go into projects, not into the system.", "Use `yuki add <name>` inside a project.") }
+    if code == 742 { return mk("No sandbox for building", "Building from source needs bubblewrap.", "Install bubblewrap, or create <config>/allow_unsandboxed_build if you accept the risk.") }
+    if code == 743 || code == 744 { return mk("Build failed or produced bad output", "The build command failed, timed out, or did not create the listed files.", "Build locally to see the log; report to the package maintainer.") }
+    if code == 745 || code == 746 { return mk("Build not approved", "Building from source needs your explicit yes.", "Answer y, or use --allow-build in scripts.") }
+    if code == 750 { return mk("Root is required", "Installing, removing and upgrading change the system.", "Run the command with sudo.") }
+    if code == 751 { return mk("Unprivileged helper failed", "The sandboxed network/build step failed. Nothing was changed on your system.", "Read the message, check the network, retry.") }
+    if code == 752 { return mk("Nothing to install", "No binary for your platform and no source release.", "Ask the maintainer for a build for your target, see `yuki config`.") }
+    if code == 753 { return mk("Aborted", "You answered no, or the artifact layout was unexpected.", "Run again and confirm.") }
+    if code == 754 { return mk("New yuki failed its self-check", "The upgraded binary did not start, so the upgrade was rolled back.", "You still have the previous version. Report the release.") }
+    if code == 755 { return mk("Install failed", "An unexpected error stopped the install.", "Run `yuki doctor` and retry.") }
+    if code == 756 { return mk("Files differ from the database", "Files were modified or are missing.", "Reinstall with `sudo yuki reinstall <pkg>`.") }
+    if code == 757 { return mk("Installed packages were withdrawn", "The index no longer offers these versions.", "Upgrade or remove them.") }
+    if code == 760 { return mk("Not enough signatures", "A rotation file needs signatures from at least `threshold` different trusted keys.", "Get more signers, or lower <config>/threshold.") }
+    if code == 761 || code == 762 { return mk("Rotation file expired or old", "It is out of date.", "Ask the registry owner for a fresh one.") }
+    if code == 763 { return mk("Key refresh failed", "Fetching or applying the rotation failed.", "Retry with network access.") }
+    if code == 770 { return mk("yuki was not installed by yuki", "self-update only works for a copy installed as a package.", "Run `sudo yuki install yuki` once.") }
+    if code == 799 { return mk("Self-test failed", "This build does not behave as expected (hashing, signatures, threads or path rules).", "Do not use it for installs. Rebuild, and send the failing lines above to the author.") }
+    return []
+}
+
+public fun has_explain(code: int64) -> bool {
+    return explain_lines(code).len() > 0
+}
+
+// Одна строка под ошибкой: «что делать».
+public fun hint_line(code: int64) -> string {
+    set l = explain_lines(code)
+    if l.len() == 0 {
+        return ""
+    }
+    return l[2]
+}

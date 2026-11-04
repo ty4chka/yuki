@@ -1,0 +1,440 @@
+<!doctype html>
+<html lang="ru" data-lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>yuki — package manager for Yukino</title>
+<meta name="color-scheme" content="light dark">
+<style>
+:root{
+  --primary:#6b4fd8; --on-primary:#fff; --primary-container:#e6deff; --on-primary-container:#21005d;
+  --secondary-container:#e8def8; --on-secondary-container:#1d192b;
+  --tertiary:#0f8f8f; --tertiary-container:#c8f2ee; --on-tertiary-container:#00201f;
+  --surface:#fdf8ff; --surface-1:#f5eefb; --surface-2:#efe7f7; --surface-3:#e9e0f2;
+  --on-surface:#1d1b20; --on-surface-var:#49454f; --outline:#7a757f; --outline-var:#cac4d0;
+  --error:#b3261e; --ok:#1f7a45; --warn:#8a5a00;
+  --code-bg:#1e1e2e; --code-fg:#cdd6f4;
+  --r-s:12px; --r-m:20px; --r-l:28px; --r-xl:40px;
+  --spring:cubic-bezier(.34,1.56,.64,1); --ease:cubic-bezier(.2,0,0,1);
+}
+@media (prefers-color-scheme:dark){
+  :root{
+    --primary:#cfbcff; --on-primary:#381e72; --primary-container:#4f378b; --on-primary-container:#eaddff;
+    --secondary-container:#4a4458; --on-secondary-container:#e8def8;
+    --tertiary:#7fd6cf; --tertiary-container:#00504d; --on-tertiary-container:#c8f2ee;
+    --surface:#141218; --surface-1:#1d1a22; --surface-2:#211f26; --surface-3:#2b2930;
+    --on-surface:#e6e0e9; --on-surface-var:#cac4d0; --outline:#948f99; --outline-var:#49454f;
+    --error:#f2b8b5; --ok:#8fd9a8; --warn:#f2c26b;
+  }
+}
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{margin:0;background:var(--surface);color:var(--on-surface);font:16px/1.6 "Roboto Flex",Roboto,system-ui,-apple-system,"Segoe UI",sans-serif;
+  padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+html[data-lang="ru"] [lang="en"], html[data-lang="en"] [lang="ru"]{display:none !important}
+a{color:var(--primary)}
+code,pre{font-family:ui-monospace,"JetBrains Mono","DejaVu Sans Mono",Consolas,monospace}
+.wrap{max-width:1040px;margin:0 auto;padding:0 20px}
+section{padding:56px 0}
+h2{font-size:clamp(28px,5vw,40px);line-height:1.1;margin:0 0 8px;letter-spacing:-.01em;font-weight:700}
+.lead{color:var(--on-surface-var);margin:0 0 28px;max-width:62ch}
+
+/* top app bar */
+.bar{position:sticky;top:0;z-index:10;background:color-mix(in srgb,var(--surface) 88%,transparent);backdrop-filter:blur(14px);
+  border-bottom:1px solid var(--outline-var);padding-top:env(safe-area-inset-top)}
+.bar .wrap{display:flex;align-items:center;gap:14px;height:64px}
+.logo{display:flex;align-items:center;gap:10px;font-weight:800;font-size:22px;letter-spacing:-.02em;text-decoration:none;color:var(--on-surface)}
+.blob{width:34px;height:34px;background:var(--primary);border-radius:60% 40% 55% 45%/50% 60% 40% 50%;animation:morph 7s ease-in-out infinite alternate;display:grid;place-items:center;color:var(--on-primary);font-size:15px}
+@keyframes morph{0%{border-radius:60% 40% 55% 45%/50% 60% 40% 50%}50%{border-radius:40% 60% 45% 55%/60% 40% 60% 40%}100%{border-radius:55% 45% 60% 40%/45% 55% 45% 55%}}
+.nav{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;flex:1}
+.nav::-webkit-scrollbar{display:none}
+.chip{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 16px;border-radius:var(--r-m);border:1px solid var(--outline-var);background:transparent;color:var(--on-surface-var);
+  font:500 14px/1 inherit;text-decoration:none;white-space:nowrap;transition:background .2s var(--ease),border-radius .35s var(--spring)}
+.chip:hover{background:var(--surface-3);border-radius:var(--r-s)}
+.seg{display:inline-flex;border:1px solid var(--outline);border-radius:20px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--on-surface-var);font:600 13px/1 inherit;padding:0 14px;height:34px;cursor:pointer;transition:background .2s}
+.seg button[aria-pressed="true"]{background:var(--secondary-container);color:var(--on-secondary-container)}
+
+/* buttons: форма меняется при нажатии */
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;height:56px;padding:0 28px;border:0;border-radius:28px;cursor:pointer;
+  font:600 16px/1 inherit;text-decoration:none;transition:border-radius .35s var(--spring),transform .35s var(--spring),box-shadow .2s;position:relative;overflow:hidden}
+.btn:hover{border-radius:18px}
+.btn:active{border-radius:10px;transform:scale(.97)}
+.btn.filled{background:var(--primary);color:var(--on-primary)}
+.btn.tonal{background:var(--secondary-container);color:var(--on-secondary-container)}
+.btn.outlined{background:transparent;color:var(--primary);box-shadow:inset 0 0 0 1px var(--outline)}
+.btn:focus-visible,.chip:focus-visible,.tab:focus-visible,summary:focus-visible,.copy:focus-visible{outline:3px solid var(--tertiary);outline-offset:2px}
+
+/* hero */
+.hero{padding:48px 0 24px}
+.hero-grid{display:grid;gap:32px;grid-template-columns:1.1fr .9fr;align-items:center}
+.display{font-size:clamp(64px,14vw,132px);line-height:.9;font-weight:800;letter-spacing:-.04em;margin:0}
+.display span{color:var(--primary)}
+.tag{font-size:clamp(18px,2.6vw,24px);color:var(--on-surface-var);margin:16px 0 28px;max-width:34ch}
+.row{display:flex;flex-wrap:wrap;gap:12px}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:24px}
+.pill{padding:6px 14px;border-radius:999px;background:var(--tertiary-container);color:var(--on-tertiary-container);font-weight:600;font-size:13px}
+.term{background:var(--code-bg);color:var(--code-fg);border-radius:var(--r-xl) var(--r-xl) var(--r-xl) 12px;padding:22px 22px 18px;font-size:13px;line-height:1.7;overflow-x:auto;
+  box-shadow:0 20px 50px -20px rgba(80,50,160,.55)}
+.term .d{color:#6c7086}.term .a{color:#89b4fa}.term .g{color:#a6e3a1}.term .w{color:#f9e2af}.term .p{color:#cba6f7;font-weight:700}.term .r{color:#f38ba8;font-weight:700}
+.dots{display:flex;gap:6px;margin-bottom:12px}.dots i{width:10px;height:10px;border-radius:50%;background:#45475a}
+
+/* cards */
+.bento{display:grid;gap:14px;grid-template-columns:repeat(4,1fr)}
+.card{background:var(--surface-2);border-radius:var(--r-l);padding:24px;transition:border-radius .4s var(--spring),transform .4s var(--spring)}
+.card:hover{border-radius:var(--r-m) var(--r-xl) var(--r-m) var(--r-xl);transform:translateY(-3px)}
+.card.big{grid-column:span 2;background:var(--primary-container);color:var(--on-primary-container)}
+.card.alt{background:var(--tertiary-container);color:var(--on-tertiary-container)}
+.card h3{margin:10px 0 6px;font-size:20px}
+.card p{margin:0;opacity:.9}
+.ico{width:48px;height:48px;display:grid;place-items:center;font-size:24px;background:var(--surface);border-radius:16px 24px 16px 24px}
+.card.big .ico,.card.alt .ico{background:rgba(255,255,255,.35)}
+
+/* tabs + code */
+.tabs{display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap}
+.tab{height:44px;padding:0 22px;border-radius:22px;border:1px solid var(--outline);background:transparent;color:var(--on-surface-var);font:600 15px/1 inherit;cursor:pointer;transition:border-radius .3s var(--spring),background .2s}
+.tab[aria-selected="true"]{background:var(--primary);color:var(--on-primary);border-color:var(--primary);border-radius:14px}
+.panel[hidden]{display:none}
+.code{position:relative;background:var(--code-bg);color:var(--code-fg);border-radius:var(--r-l);padding:20px 20px 20px 22px;margin:0 0 14px;overflow-x:auto;font-size:13.5px;line-height:1.7}
+.code pre{margin:0;white-space:pre}
+.code .c{color:#6c7086}
+.copy{position:absolute;top:10px;right:10px;height:34px;padding:0 14px;border:0;border-radius:17px;background:rgba(255,255,255,.12);color:#cdd6f4;font:600 12px/1 inherit;cursor:pointer;transition:border-radius .3s var(--spring),background .2s}
+.copy:hover{background:rgba(255,255,255,.22);border-radius:8px}
+.copy.done{background:#a6e3a1;color:#1e1e2e}
+
+/* commands */
+.cmds{display:grid;gap:14px;grid-template-columns:repeat(3,1fr)}
+.group{background:var(--surface-2);border-radius:var(--r-l);padding:20px}
+.group h3{margin:0 0 10px;font-size:15px;letter-spacing:.04em;text-transform:uppercase;color:var(--primary)}
+.group ul{list-style:none;margin:0;padding:0;display:grid;gap:8px}
+.group li{display:grid;gap:2px}
+.group code{font-weight:700;font-size:13.5px}
+.group small{color:var(--on-surface-var)}
+table{width:100%;border-collapse:separate;border-spacing:0;background:var(--surface-2);border-radius:var(--r-l);overflow:hidden}
+th,td{padding:12px 16px;text-align:left;vertical-align:top;border-bottom:1px solid var(--outline-var)}
+th{background:var(--surface-3);font-size:13px;letter-spacing:.03em;text-transform:uppercase;color:var(--on-surface-var)}
+tr:last-child td{border-bottom:0}
+td code{font-size:13px;color:var(--primary);font-weight:700}
+.scroll{overflow-x:auto;border-radius:var(--r-l)}
+
+/* steps */
+.steps{list-style:none;margin:0;padding:0;display:grid;gap:12px;counter-reset:s}
+.steps li{counter-increment:s;display:grid;grid-template-columns:56px 1fr auto;gap:16px;align-items:center;background:var(--surface-2);padding:16px 20px;border-radius:var(--r-l)}
+.steps li::before{content:counter(s);width:48px;height:48px;display:grid;place-items:center;font-weight:800;font-size:20px;background:var(--primary);color:var(--on-primary);border-radius:50% 40% 50% 40%}
+.steps b{display:block}
+.who{font-size:12px;font-weight:700;padding:6px 12px;border-radius:12px;background:var(--secondary-container);color:var(--on-secondary-container)}
+.who.root{background:var(--error);color:var(--surface)}
+
+/* gallery */
+.gal{display:grid;gap:14px;grid-template-columns:repeat(2,1fr)}
+.shot{background:var(--code-bg);border-radius:var(--r-l);overflow:hidden}
+.shot img{display:block;width:100%;height:auto}
+.shot figcaption{padding:10px 16px;font-size:13px;color:#a6adc8}
+.shot.wide{grid-column:span 2}
+figure{margin:0}
+
+/* theme */
+.sw{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 16px}
+.sw span{min-width:92px;padding:14px 16px;border-radius:var(--r-m);font-weight:700;font-size:13px;color:#1e1e2e}
+
+/* faq */
+details{background:var(--surface-2);border-radius:var(--r-l);padding:4px 20px;margin-bottom:10px;transition:border-radius .3s var(--spring)}
+details[open]{border-radius:var(--r-m)}
+summary{cursor:pointer;font-weight:700;padding:14px 0;list-style:none}
+summary::after{content:"+";float:right;font-size:22px;line-height:1}
+details[open] summary::after{content:"−"}
+details p{margin:0 0 16px;color:var(--on-surface-var)}
+
+footer{padding:40px 0 64px;color:var(--on-surface-var);border-top:1px solid var(--outline-var)}
+.reveal{opacity:0;transform:translateY(18px);transition:opacity .6s var(--ease),transform .6s var(--spring)}
+.reveal.in{opacity:1;transform:none}
+@media (max-width:860px){
+  .hero-grid{grid-template-columns:1fr}.bento{grid-template-columns:repeat(2,1fr)}.cmds{grid-template-columns:1fr}.gal{grid-template-columns:1fr}.shot.wide{grid-column:auto}
+  .steps li{grid-template-columns:48px 1fr}.steps .who{grid-column:2;justify-self:start}
+  .nav .chip.hide-sm{display:none}
+}
+@media (max-width:520px){.bento{grid-template-columns:1fr}.card.big{grid-column:auto}.btn{width:100%}}
+@media (prefers-reduced-motion:reduce){*{animation:none !important;transition:none !important}.reveal{opacity:1;transform:none}}
+</style>
+</head>
+<body>
+
+<header class="bar">
+  <div class="wrap">
+    <a class="logo" href="#top"><span class="blob">雪</span>yuki</a>
+    <nav class="nav" aria-label="sections">
+      <a class="chip" href="#start"><span lang="ru">Старт</span><span lang="en">Start</span></a>
+      <a class="chip" href="#commands"><span lang="ru">Команды</span><span lang="en">Commands</span></a>
+      <a class="chip hide-sm" href="#how"><span lang="ru">Как работает</span><span lang="en">How it works</span></a>
+      <a class="chip hide-sm" href="#security"><span lang="ru">Защита</span><span lang="en">Security</span></a>
+      <a class="chip hide-sm" href="#look"><span lang="ru">Вид</span><span lang="en">Look</span></a>
+      <a class="chip" href="#faq">FAQ</a>
+    </nav>
+    <div class="seg" role="group" aria-label="language">
+      <button data-set="ru" aria-pressed="true">RU</button>
+      <button data-set="en" aria-pressed="false">EN</button>
+    </div>
+  </div>
+</header>
+
+<main id="top">
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <h1 class="display">yu<span>ki</span></h1>
+      <p class="tag"><span lang="ru">Менеджер пакетов для Yukino. Без серверов, с подписями и откатом.</span><span lang="en">The package manager for Yukino. No servers, with signatures and rollback.</span></p>
+      <div class="row">
+        <a class="btn filled" href="#start"><span lang="ru">Быстрый старт</span><span lang="en">Quick start</span></a>
+        <a class="btn tonal" href="TUTORIAL.md"><span lang="ru">Свой индекс за вечер</span><span lang="en">Your own index in an evening</span></a>
+        <a class="btn outlined" href="DESIGN.md"><span lang="ru">Модель защиты</span><span lang="en">Security model</span></a>
+      </div>
+      <div class="pills">
+        <span class="pill">Yukino</span><span class="pill">Ed25519</span><span class="pill">BLAKE3</span><span class="pill">git index</span><span class="pill">bubblewrap</span><span class="pill">pacman-style</span>
+      </div>
+    </div>
+    <div class="term" aria-label="terminal preview">
+      <div class="dots"><i></i><i></i><i></i></div>
+<span class="d">$</span> <b>sudo yuki install ripgrep</b>
+<span class="d">[1/5]</span> asking the index <span class="d">(unprivileged)</span>
+<span class="d">[2/5]</span> verifying signatures as root
+
+  <span class="a">::</span> <b>Packages</b> (2)  <span class="d">target linux-x86_64</span>
+    <span class="g">+</span> <b>ripgrep</b> <span class="g">14.1.0</span>   <span class="d">prebuilt binary</span>
+    <span class="w">⚠</span> <b>pcre2</b> <span class="g">10.42.0</span>   <span class="w">BUILD FROM SOURCE</span>
+
+<span class="d">[4/5]</span> re-verifying every file as root
+  <span class="g">✔</span> hashes and archive audit passed
+<span class="d">[5/5]</span> applying the transaction
+  <span class="g">✔</span> ripgrep 14.1.0 <span class="d">(binary)</span>
+  <span class="g">✔</span> done in 12.4s <span class="d">· undo: sudo yuki rollback</span>
+    </div>
+  </div>
+</section>
+
+<section id="why" class="reveal">
+  <div class="wrap">
+    <h2><span lang="ru">Что внутри</span><span lang="en">What is inside</span></h2>
+    <p class="lead"><span lang="ru">Реестр это обычный git-репозиторий: файлы раздаёт GitHub, а доверие строится на подписях и хешах.</span><span lang="en">The registry is a plain git repository: GitHub serves files, trust comes from signatures and hashes.</span></p>
+    <div class="bento">
+      <div class="card big"><div class="ico">🔏</div>
+        <h3><span lang="ru">Подписанный индекс</span><span lang="en">Signed index</span></h3>
+        <p><span lang="ru">Ed25519 по записи, BLAKE3 по архиву, срок действия и защита от отката. Опубликованную версию нельзя тихо подменить.</span><span lang="en">Ed25519 over each entry, BLAKE3 over each archive, expiry and rollback protection. A published version cannot be swapped silently.</span></p></div>
+      <div class="card"><div class="ico">🧱</div>
+        <h3><span lang="ru">Без root до конца</span><span lang="en">No root until the end</span></h3>
+        <p><span lang="ru">Сеть и сборка идут от nobody, root всё проверяет заново.</span><span lang="en">Network and builds run as nobody; root re-verifies everything.</span></p></div>
+      <div class="card"><div class="ico">↩</div>
+        <h3><span lang="ru">Транзакции</span><span lang="en">Transactions</span></h3>
+        <p><span lang="ru">Журнал, блокировка и откат одной командой.</span><span lang="en">Journal, lock and one-command rollback.</span></p></div>
+      <div class="card"><div class="ico">🛠</div>
+        <h3><span lang="ru">Нет бинарника? Соберём</span><span lang="en">No binary? We build</span></h3>
+        <p><span lang="ru">Сборка из исходников в песочнице и только с вашего согласия.</span><span lang="en">Sandboxed source build, only with your consent.</span></p></div>
+      <div class="card alt"><div class="ico">🕸</div>
+        <h3><span lang="ru">Связи пакетов</span><span lang="en">Package relations</span></h3>
+        <p><span lang="ru">why, tree, rdeps, related, graph и orphans.</span><span lang="en">why, tree, rdeps, related, graph and orphans.</span></p></div>
+      <div class="card big"><div class="ico">✨</div>
+        <h3><span lang="ru">Красиво и настраиваемо</span><span lang="en">Beautiful and configurable</span></h3>
+        <p><span lang="ru">Живая панель с растущим деревом зависимостей, одна тема в theme.toml, подсказки к каждой ошибке и ASCII-режим для любого терминала.</span><span lang="en">A live panel with a growing dependency tree, one theme in theme.toml, a hint for every error and an ASCII mode for any terminal.</span></p></div>
+    </div>
+  </div>
+</section>
+
+<section id="start" class="reveal">
+  <div class="wrap">
+    <h2><span lang="ru">Быстрый старт</span><span lang="en">Quick start</span></h2>
+    <p class="lead"><span lang="ru">Исходники ещё не собирались на реальной машине: первая сборка покажет ошибки, их нужно поправить.</span><span lang="en">The sources have not been compiled on a real machine yet: the first build will show errors to fix.</span></p>
+    <div class="tabs" role="tablist">
+      <button class="tab" role="tab" aria-selected="true" data-tab="t1"><span lang="ru">Установить</span><span lang="en">Install</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="t2"><span lang="ru">Пользоваться</span><span lang="en">Use</span></button>
+      <button class="tab" role="tab" aria-selected="false" data-tab="t3"><span lang="ru">Мейнтейнеру</span><span lang="en">Maintainers</span></button>
+    </div>
+    <div class="panel" id="t1">
+      <div class="code"><button class="copy">copy</button><pre><span class="c"># build yuki</span>
+cd yuki &amp;&amp; yukino build --release
+sudo install -m 755 target/release/yuki /usr/local/bin/yuki
+
+<span class="c"># point it at an index and trust its key</span>
+sudo mkdir -p /etc/yuki
+echo https://raw.githubusercontent.com/YOU/yuki-index/main | sudo tee /etc/yuki/index_url
+sudo yuki keys trust main &lt;public-key&gt;
+yuki doctor</pre></div>
+    </div>
+    <div class="panel" id="t2" hidden>
+      <div class="code"><button class="copy">copy</button><pre>yuki -Ss grep                <span class="c"># search</span>
+yuki -Si ripgrep             <span class="c"># description</span>
+sudo yuki -S ripgrep         <span class="c"># install</span>
+sudo yuki -Syu               <span class="c"># upgrade everything</span>
+sudo yuki -Rs ripgrep        <span class="c"># remove with unneeded deps</span>
+yuki related ripgrep         <span class="c"># what is connected</span>
+sudo yuki rollback           <span class="c"># undo the last transaction</span></pre></div>
+    </div>
+    <div class="panel" id="t3" hidden>
+      <div class="code"><button class="copy">copy</button><pre>yuki keys gen main
+yuki pack hello ./pkgroot hello-1.0.0-linux-x86_64.tar.zst
+yuki index add hello.release.json main
+yuki index catalog main
+git add index catalog.json* &amp;&amp; git commit -S -m "hello 1.0.0"   <span class="c"># then open a PR</span></pre></div>
+      <p><a href="TUTORIAL.md"><span lang="ru">Полный туториал: репозиторий, CI, ключи, ротация</span><span lang="en">Full tutorial: repository, CI, keys, rotation</span></a></p>
+    </div>
+  </div>
+</section>
+
+<section id="commands" class="reveal">
+  <div class="wrap">
+    <h2><span lang="ru">Команды</span><span lang="en">Commands</span></h2>
+    <p class="lead"><span lang="ru"><code>yuki help &lt;команда&gt;</code> даёт примеры, <code>yuki explain Y0301</code> объясняет любую ошибку, при опечатке подскажет правильную команду.</span><span lang="en"><code>yuki help &lt;command&gt;</code> shows examples, <code>yuki explain Y0301</code> explains any error, a typo gets a suggestion.</span></p>
+    <div class="cmds">
+      <div class="group"><h3><span lang="ru">Система (sudo)</span><span lang="en">System (sudo)</span></h3><ul>
+        <li><code>install | reinstall</code><small><span lang="ru">бинарник или сборка из исходников</span><span lang="en">binary or source build</span></small></li>
+        <li><code>uninstall [-s]</code><small><span lang="ru">удаление, -s убирает ненужные зависимости</span><span lang="en">remove; -s drops unneeded deps</span></small></li>
+        <li><code>upgrade | self-update</code><small><span lang="ru">таблица «старая → новая», один вопрос</span><span lang="en">old → new table, one prompt</span></small></li>
+        <li><code>autoremove</code><small><span lang="ru">убрать осиротевшие зависимости</span><span lang="en">remove orphaned dependencies</span></small></li>
+        <li><code>hold | unhold</code><small><span lang="ru">зафиксировать версию</span><span lang="en">pin a version</span></small></li>
+        <li><code>rollback | history</code><small><span lang="ru">откат и журнал</span><span lang="en">undo and log</span></small></li>
+      </ul></div>
+      <div class="group"><h3><span lang="ru">Посмотреть</span><span lang="en">Look around</span></h3><ul>
+        <li><code>search | show</code><small><span lang="ru">поиск и описание пакета</span><span lang="en">find a package, read its description</span></small></li>
+        <li><code>list | info | files | owns</code><small><span lang="ru">что установлено и чьё это</span><span lang="en">what is installed and who owns it</span></small></li>
+        <li><code>why | tree | rdeps | related</code><small><span lang="ru">как пакеты связаны</span><span lang="en">how packages connect</span></small></li>
+        <li><code>graph [dot]</code><small><span lang="ru">весь граф, Graphviz по запросу</span><span lang="en">the whole graph, Graphviz on request</span></small></li>
+        <li><code>outdated | orphans</code><small><span lang="ru">что обновить, что лишнее</span><span lang="en">what to upgrade, what is unneeded</span></small></li>
+        <li><code>check | sys-audit</code><small><span lang="ru">файлы против базы, снятые версии</span><span lang="en">files vs database, withdrawn versions</span></small></li>
+      </ul></div>
+      <div class="group"><h3><span lang="ru">Проекты и сервис</span><span lang="en">Projects and tools</span></h3><ul>
+        <li><code>add | remove | update</code><small><span lang="ru">библиотеки в yuki.toml</span><span lang="en">libraries in yuki.toml</span></small></li>
+        <li><code>fetch | audit</code><small><span lang="ru">перепроверить и сверить с индексом</span><span lang="en">re-verify and compare with the index</span></small></li>
+        <li><code>keys</code><small>gen · trust · untrust · list · export · sign · refresh</small></li>
+        <li><code>export | import</code><small><span lang="ru">перенос списка пакетов</span><span lang="en">move a package list</span></small></li>
+        <li><code>doctor | config | clean</code><small><span lang="ru">диагностика, настройки, кэш</span><span lang="en">diagnose, settings, cache</span></small></li>
+        <li><code>theme | completions</code><small><span lang="ru">вид и дополнение в оболочке</span><span lang="en">look and shell completion</span></small></li>
+      </ul></div>
+    </div>
+    <h2 style="margin-top:40px;font-size:26px"><span lang="ru">Флаги как в pacman</span><span lang="en">pacman-style flags</span></h2>
+    <div class="scroll"><table>
+      <thead><tr><th>flag</th><th><span lang="ru">значит</span><span lang="en">means</span></th><th>flag</th><th><span lang="ru">значит</span><span lang="en">means</span></th></tr></thead>
+      <tbody>
+      <tr><td><code>-S pkg</code></td><td>install</td><td><code>-Q</code></td><td>list</td></tr>
+      <tr><td><code>-Syu</code></td><td>upgrade</td><td><code>-Qi pkg</code></td><td>info</td></tr>
+      <tr><td><code>-Ss word</code></td><td>search</td><td><code>-Ql pkg</code></td><td>files</td></tr>
+      <tr><td><code>-Si pkg</code></td><td>show</td><td><code>-Qo path</code></td><td>owns</td></tr>
+      <tr><td><code>-R pkg</code></td><td>uninstall</td><td><code>-Qe | -Qd</code></td><td>explicit | deps</td></tr>
+      <tr><td><code>-Rs pkg</code></td><td><span lang="ru">с ненужными зависимостями</span><span lang="en">with unneeded deps</span></td><td><code>-Qdt</code></td><td>orphans</td></tr>
+      <tr><td><code>-Sc | -Scc</code></td><td>clean</td><td><code>-Qu | -Qk</code></td><td>outdated | check</td></tr>
+      </tbody></table></div>
+  </div>
+</section>
+
+<section id="how" class="reveal">
+  <div class="wrap">
+    <h2><span lang="ru">Как проходит установка</span><span lang="en">How an install goes</span></h2>
+    <p class="lead"><span lang="ru">Root появляется только там, где нужно менять систему, и ничему не верит на слово.</span><span lang="en">Root appears only where the system changes, and trusts nothing it is handed.</span></p>
+    <ol class="steps">
+      <li><div><b><span lang="ru">Ребёнок приносит записи индекса</span><span lang="en">The child fetches index entries</span></b><small><span lang="ru">fork, отказ от root, no_new_privs</span><span lang="en">fork, drop root, no_new_privs</span></small></div><span class="who">nobody</span></li>
+      <li><div><b><span lang="ru">Root заново проверяет и строит план</span><span lang="en">Root re-verifies and builds the plan</span></b><small><span lang="ru">подпись, срок, откат, выбор версии, вопрос «продолжить?»</span><span lang="en">signature, expiry, rollback, version choice, a confirmation prompt</span></small></div><span class="who root">root</span></li>
+      <li><div><b><span lang="ru">Скачивание или сборка в песочнице</span><span lang="en">Download or sandboxed build</span></b><small><span lang="ru">bubblewrap, без сети, лимит 30 минут</span><span lang="en">bubblewrap, no network, 30 minute limit</span></small></div><span class="who">nobody</span></li>
+      <li><div><b><span lang="ru">Root копирует к себе и проверяет файлы</span><span lang="en">Root copies and re-checks the files</span></b><small><span lang="ru">BLAKE3, аудит архива, политика путей, процессы nobody убиты</span><span lang="en">BLAKE3, archive audit, path policy, nobody's processes killed</span></small></div><span class="who root">root</span></li>
+      <li><div><b><span lang="ru">Транзакция с журналом</span><span lang="en">A journaled transaction</span></b><small><span lang="ru">атомарная замена файлов, откат при ошибке</span><span lang="en">atomic file replacement, rollback on error</span></small></div><span class="who root">root</span></li>
+    </ol>
+  </div>
+</section>
+
+<section id="security" class="reveal">
+  <div class="wrap">
+    <h2><span lang="ru">От чего защищаемся</span><span lang="en">What it defends against</span></h2>
+    <div class="scroll"><table>
+      <thead><tr><th><span lang="ru">Угроза</span><span lang="en">Threat</span></th><th><span lang="ru">Защита</span><span lang="en">Defense</span></th></tr></thead>
+      <tbody>
+      <tr><td><span lang="ru">Подмена архива или индекса</span><span lang="en">Swapped archive or index</span></td><td>BLAKE3 + Ed25519 + <span lang="ru">повторная проверка в root</span><span lang="en">re-check in root</span></td></tr>
+      <tr><td><span lang="ru">Откат и «замороженный» индекс</span><span lang="en">Rollback and frozen index</span></td><td>seq + expires + seen</td></tr>
+      <tr><td><span lang="ru">Вредный архив</span><span lang="en">Malicious archive</span></td><td><span lang="ru">аудит до распаковки, политика путей, лимиты</span><span lang="en">audit before unpacking, path policy, limits</span></td></tr>
+      <tr><td><span lang="ru">Компрометация сети или сборки</span><span lang="en">Compromised network or build</span></td><td><span lang="ru">разделение привилегий, песочница</span><span lang="en">privilege separation, sandbox</span></td></tr>
+      <tr><td><span lang="ru">Сбой посреди установки</span><span lang="en">Failure mid-install</span></td><td><span lang="ru">журнал, блокировка, откат</span><span lang="en">journal, lock, rollback</span></td></tr>
+      <tr><td><span lang="ru">Утёкший ключ</span><span lang="en">A leaked key</span></td><td><span lang="ru">порог подписей, ротация и отзыв</span><span lang="en">signature threshold, rotation and revocation</span></td></tr>
+      </tbody></table></div>
+    <p class="lead" style="margin-top:16px"><span lang="ru">Что не защищено, написано честно в DESIGN.md: например, компрометация порога ключей или уязвимость в bubblewrap.</span><span lang="en">What is not protected is stated honestly in DESIGN.md: for example, a compromise of the signing threshold or a bubblewrap escape.</span></p>
+  </div>
+</section>
+
+<section id="look" class="reveal">
+  <div class="wrap">
+    <h2><span lang="ru">Как это выглядит</span><span lang="en">What it looks like</span></h2>
+    <p class="lead"><span lang="ru">Картинки сделаны по логике кода, а не снимки реального запуска. Названия пакетов и цифры выдуманы.</span><span lang="en">The images follow the code's logic and are not screenshots of a real run. Package names and numbers are made up.</span></p>
+    <div class="gal">
+      <figure class="shot wide"><img src="../assets/preview/yuki-live.gif" alt="animated install with a growing dependency tree" loading="lazy"><figcaption><span lang="ru">Живая панель: фазы сверху, дерево зависимостей растёт снизу</span><span lang="en">Live panel: phases on top, the dependency tree grows below</span></figcaption></figure>
+      <figure class="shot"><img src="../assets/preview/yuki-sys-install.png" alt="sudo yuki install" loading="lazy"><figcaption>sudo yuki install</figcaption></figure>
+      <figure class="shot"><img src="../assets/preview/yuki-sys-errors.png" alt="errors with hints" loading="lazy"><figcaption><span lang="ru">Ошибки с подсказками</span><span lang="en">Errors with hints</span></figcaption></figure>
+      <figure class="shot wide"><img src="../assets/preview/yuki-modes.png" alt="truecolor, ansi and ascii modes" loading="lazy"><figcaption><span lang="ru">Один результат в трёх режимах терминала: truecolor, ansi, ASCII</span><span lang="en">One result in three terminal modes: truecolor, ansi, ASCII</span></figcaption></figure>
+      <figure class="shot"><img src="../assets/preview/yuki-ci-log.png" alt="CI log" loading="lazy"><figcaption><span lang="ru">Лог для CI без анимации</span><span lang="en">CI log without animation</span></figcaption></figure>
+      <figure class="shot"><img src="../assets/preview/yuki-theme-show.png" alt="theme show" loading="lazy"><figcaption>yuki theme show</figcaption></figure>
+    </div>
+
+    <h2 style="margin-top:44px;font-size:26px"><span lang="ru">Одна тема, любые терминалы</span><span lang="en">One theme, any terminal</span></h2>
+    <div class="sw">
+      <span style="background:#89b4fa">accent</span><span style="background:#a6e3a1">good</span><span style="background:#f9e2af">warn</span>
+      <span style="background:#f38ba8">bad</span><span style="background:#cba6f7">logo</span><span style="background:#94e2d5">speed</span>
+    </div>
+    <div class="code"><button class="copy">copy</button><pre><span class="c"># ~/.config/yuki/theme.toml  (or /etc/yuki/theme.toml)</span>
+palette = "ansi"            <span class="c"># "rgb" | "ansi" (your terminal's colors) | "mono"</span>
+
+[colors]
+accent = "ansi:cyan"
+bad    = "#f38ba8+bold"
+
+[style]
+animation = true
+bar_gradient = true
+
+[symbols]
+spinner = "◐ ◓ ◑ ◒"</pre></div>
+    <p><span lang="ru">Цвет, символы и анимация подстраиваются сами: truecolor → 256 → 16 → без цвета, UTF-8 → ASCII, живой терминал → простой лог. <code>NO_COLOR=1</code> работает.</span><span lang="en">Colors, symbols and animation adapt themselves: truecolor → 256 → 16 → none, UTF-8 → ASCII, live terminal → plain log. <code>NO_COLOR=1</code> is honored.</span></p>
+  </div>
+</section>
+
+<section id="faq" class="reveal">
+  <div class="wrap">
+    <h2>FAQ</h2>
+    <details><summary><span lang="ru">Нужны ли мне свои серверы?</span><span lang="en">Do I need my own servers?</span></summary><p><span lang="ru">Нет. Индекс лежит в git-репозитории, клиент берёт файлы по HTTPS и проверяет подписи сам.</span><span lang="en">No. The index is a git repository; the client fetches files over HTTPS and verifies signatures itself.</span></p></details>
+    <details><summary><span lang="ru">Почему только через sudo?</span><span lang="en">Why only through sudo?</span></summary><p><span lang="ru">Установка меняет систему, поэтому нужны права. Но сеть и сборка выполняются без них, а root проверяет всё заново и применяет транзакцию.</span><span lang="en">Installing changes the system, so it needs rights. But network and builds run without them, and root re-verifies everything before applying a transaction.</span></p></details>
+    <details><summary><span lang="ru">Что если нет готового бинарника?</span><span lang="en">What if there is no prebuilt binary?</span></summary><p><span lang="ru">yuki покажет команду сборки, список файлов и режим песочницы и спросит согласие. В скриптах нужен флаг --allow-build.</span><span lang="en">yuki shows the build command, the file list and the sandbox mode, then asks. Scripts need --allow-build.</span></p></details>
+    <details><summary><span lang="ru">Как обновляется сам yuki?</span><span lang="en">How does yuki update itself?</span></summary><p><span lang="ru"><code>sudo yuki self-update</code>. Новый бинарник обязан запуститься, иначе обновление откатывается.</span><span lang="en"><code>sudo yuki self-update</code>. The new binary must start, otherwise the update is rolled back.</span></p></details>
+    <details><summary><span lang="ru">Утёк ключ, что делать?</span><span lang="en">A key leaked, what now?</span></summary><p><span lang="ru">Подписать <code>rotation.json</code> с отзывом достаточным числом ключей и выполнить <code>sudo yuki keys refresh</code>. Отозванный ключ больше не вернётся.</span><span lang="en">Sign a <code>rotation.json</code> with a revoke entry using enough keys and run <code>sudo yuki keys refresh</code>. A revoked key never comes back.</span></p></details>
+    <details><summary><span lang="ru">Это уже работает?</span><span lang="en">Does it work yet?</span></summary><p><span lang="ru">Исходники написаны по документации Yukino, но ни разу не компилировались на реальной машине. Ожидайте ошибок при первой сборке.</span><span lang="en">The sources follow the Yukino docs but have never been compiled on a real machine. Expect errors on the first build.</span></p></details>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap"><span lang="ru">yuki · для Yukino · см. TUTORIAL.md и DESIGN.md</span><span lang="en">yuki · for Yukino · see TUTORIAL.md and DESIGN.md</span></div>
+</footer>
+
+<script>
+(function(){
+  var root=document.documentElement;
+  function setLang(l){root.setAttribute('data-lang',l);root.lang=l;
+    document.querySelectorAll('.seg button').forEach(function(b){b.setAttribute('aria-pressed',b.dataset.set===l?'true':'false')});
+    try{localStorage.setItem('yuki-lang',l)}catch(e){}}
+  var saved=null;try{saved=localStorage.getItem('yuki-lang')}catch(e){}
+  if(!saved){saved=((navigator.language||'ru').slice(0,2)==='ru')?'ru':'en'}
+  setLang(saved);
+  document.querySelectorAll('.seg button').forEach(function(b){b.addEventListener('click',function(){setLang(b.dataset.set)})});
+
+  document.querySelectorAll('.tab').forEach(function(t){t.addEventListener('click',function(){
+    document.querySelectorAll('.tab').forEach(function(x){x.setAttribute('aria-selected',x===t?'true':'false')});
+    document.querySelectorAll('.panel').forEach(function(p){p.hidden=(p.id!==t.dataset.tab)});
+  })});
+
+  document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click',function(){
+    var text=b.parentNode.querySelector('pre').innerText;
+    function ok(){b.classList.add('done');b.textContent='✔';setTimeout(function(){b.classList.remove('done');b.textContent='copy'},1400)}
+    if(navigator.clipboard){navigator.clipboard.writeText(text).then(ok,function(){})}
+    else{var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');ok()}catch(e){}document.body.removeChild(ta)}
+  })});
+
+  var els=document.querySelectorAll('.reveal');
+  if('IntersectionObserver' in window){
+    var io=new IntersectionObserver(function(es){es.forEach(function(e){if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}})},{threshold:.08});
+    els.forEach(function(el){io.observe(el)});
+  }else{els.forEach(function(el){el.classList.add('in')})}
+})();
+</script>
+</body>
+</html>

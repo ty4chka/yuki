@@ -1,0 +1,534 @@
+// apply.ykn — транзакция установки и удаления (root).
+//
+// Порядок для каждого пакета:
+//   A. намерение — проверить пакет, найти конфликты, сделать резервные копии, записать ВЕСЬ журнал, sync на диск
+//   B. запись    — каталоги, файлы и симлинки: временный файл → проверка хеша → chmod/chown → rename
+//   C. уборка    — удалить файлы старой версии, которых больше нет
+//   D. база      — записать запись о пакете, sync
+// Журнал пишется до любых изменений (A), поэтому после сбоя питания незавершённая транзакция
+// откатывается автоматически при следующем запуске. Блокировка: каталог <state>/lock (mkdir атомарен).
+
+load std.os.unix: chmod, chown, kill, getpid
+load std.fs.files: file_exists, file_copy, file_rename, file_remove, file_metadata, file_append_text, file_read_text, file_write_text, file_symlink
+load std.fs.dirs: dir_create, dir_create_all, dir_exists, dir_walk, dir_list, dir_remove, dir_remove_all, dir_is_empty, dir_copy_all
+load std.fs.paths: path_join, path_parent, path_file_name, path_is_symlink
+load std.hash.blake3: blake3_file
+load std.strings: lines, split, starts_with, slice, eq, str_join, trim, parse_int
+load .errors: YukiError, err
+load .config: state_dir
+load .priv: sync_disk
+load .policy: policy_check, is_config
+load .verify: link_target_ok
+load .sysdb: PkgRecord, db_has, db_dir, db_read, db_write, db_files, db_remove, owner_of, dependents_of, history_add, f_hash, f_mode, f_kind, f_path
+load .util: now_secs, now_ms
+
+public struct ApplyItem {
+    name: string
+    version: string
+    checksum: string
+    signer: string
+    origin: string
+    deps: string
+    root: string
+    reason: string
+    summary: string
+    links: string[]
+}
+
+fun exists_any(p: string) -> bool {
+    return path_is_symlink(p) || file_exists(p)
+}
+
+// ── блокировка ──────────────────────────────────────────────────────────
+
+fun lock_dir() -> string {
+    return path_join(state_dir(), "lock")
+}
+
+fun lock_acquire() {
+    dir_create_all(state_dir())
+    set ld = lock_dir()
+    if !dir_create(ld) {
+        set pf = path_join(ld, "pid")
+        set alive = false
+        if file_exists(pf) {
+            set pid: int64 = parse_int(trim(file_read_text(pf))) ?? 0
+            if pid > 0 && kill(cast(pid, "int32"), 0) == 0 {
+                rewrite alive = true
+            }
+        }
+        if alive {
+            panic(err("another yuki is running (lock: " + ld + ")", 730, ld))
+        }
+        dir_remove_all(ld)
+        if !dir_create(ld) {
+            panic(err("could not take the lock: " + ld, 730, ld))
+        }
+    }
+    file_write_text(path_join(ld, "pid"), cast(getpid(), "string"))
+}
+
+fun lock_release() {
+    dir_remove_all(lock_dir())
+}
+
+// ── журнал и откат ──────────────────────────────────────────────────────
+
+fun tx_dir(txid: string) -> string {
+    return path_join(path_join(state_dir(), "tx"), txid)
+}
+
+fun jr(txid: string, line: string) {
+    file_append_text(path_join(tx_dir(txid), "journal"), line + "\n")
+}
+
+fun restore_file(backup: string, dest: string, mode: string) {
+    set tmp = dest + ".yuki-tmp"
+    file_copy(backup, tmp)
+    set m: uint32 = cast(parse_int(mode) ?? 420, "uint32")
+    chmod(tmp, m)
+    set root: uint32 = 0
+    chown(tmp, root, root)
+    file_rename(tmp, dest)
+}
+
+fun restore_link(dest: string, target: string) {
+    if exists_any(dest) {
+        file_remove(dest)
+    }
+    if !eq(target, "-") {
+        file_symlink(target, dest)
+    }
+}
+
+// Откат по журналу в обратном порядке. Терпим к «наполовину сделанным» шагам:
+// удаление несуществующего и повторное восстановление безопасны.
+public fun rollback_tx(txid: string) {
+    set jf = path_join(tx_dir(txid), "journal")
+    if !file_exists(jf) {
+        panic(err("no journal for transaction " + txid, 731, txid))
+    }
+    set ls = lines(file_read_text(jf))
+    for k in 0..ls.len() {
+        set idx = ls.len() - 1 - k
+        set p = split(trim(ls[idx]), " ")
+        if p.len() == 0 {
+            continue
+        }
+        if eq(p[0], "new") && p.len() == 2 {
+            if exists_any(p[1]) {
+                file_remove(p[1])
+            }
+        } elif eq(p[0], "newdir") && p.len() == 2 {
+            if dir_exists(p[1]) && dir_is_empty(p[1]) {
+                dir_remove(p[1])
+            }
+        } elif (eq(p[0], "bak") || eq(p[0], "del")) && p.len() == 4 {
+            restore_file(p[2], p[1], p[3])
+        } elif eq(p[0], "oldlink") && p.len() == 3 {
+            restore_link(p[1], p[2])
+        } elif eq(p[0], "deldir") && p.len() == 2 {
+            dir_create_all(p[1])
+        } elif eq(p[0], "db") && p.len() == 3 {
+            db_remove(p[1])
+            if eq(p[2], "old") {
+                dir_copy_all(path_join(path_join(tx_dir(txid), "db"), p[1]), db_dir(p[1]))
+            }
+        }
+    }
+    file_write_text(path_join(tx_dir(txid), "ROLLED_BACK"), cast(now_secs(), "string"))
+    history_add(cast(now_secs(), "string") + " rollback " + txid)
+    sync_disk()
+}
+
+// Незавершённые транзакции (питание, kill -9): откатить перед новой работой.
+fun recover_interrupted() {
+    set base = path_join(state_dir(), "tx")
+    if !dir_exists(base) {
+        return
+    }
+    set all = dir_list(base)
+    for i in 0..all.len() {
+        if !file_exists(path_join(all[i], "COMMITTED")) && !file_exists(path_join(all[i], "ROLLED_BACK")) && file_exists(path_join(all[i], "journal")) {
+            sus {
+                rollback_tx(path_file_name(all[i]))
+            } catch {
+            }
+        }
+    }
+}
+
+// ── сканирование пакета ─────────────────────────────────────────────────
+
+fun strip_root(p: string, root: string) -> string {
+    if starts_with(p, root + "/") {
+        return slice(p, root.len() + 1, p.len())
+    }
+    return ""
+}
+
+// Цель симлинка из списка, который root получил из аудированного архива ("" — такого нет).
+fun link_target_for(ref items: ApplyItem[], n: int64, rel: string) -> string {
+    for k in 0..items[n].links.len() {
+        set p = split(items[n].links[k], "|")
+        if p.len() == 2 && eq(p[0], rel) {
+            return p[1]
+        }
+    }
+    return ""
+}
+
+// Строки "<hash> <mode> <kind> <path>"; для симлинка вместо hash стоит его цель, kind = l.
+// Только каталоги, обычные файлы и безопасные симлинки; каждый путь прошёл policy.
+fun scan_package(pkg: string, root: string, ref items: ApplyItem[], n: int64) -> string[] {
+    set out: string[] = []
+    set exec_bits: uint32 = 73
+    set zero: uint32 = 0
+    set all = dir_walk(root)
+    for i in 0..all.len() {
+        set rel = strip_root(all[i], root)
+        if rel.len() == 0 {
+            continue
+        }
+        set why = policy_check(pkg, rel)
+        if why.len() > 0 {
+            panic(err(why + ": " + rel, 721, pkg))
+        }
+        if path_is_symlink(all[i]) {
+            set tgt = link_target_for(ref items, n, rel)
+            if tgt.len() == 0 || !link_target_ok(rel, tgt) {
+                panic(err("unsafe or unexpected symlink: " + rel, 720, pkg))
+            }
+            out.push(tgt + " 777 l " + rel)
+            continue
+        }
+        set md = file_metadata(all[i])
+        if md.is_dir {
+            out.push("- 755 d " + rel)
+        } elif md.is_file {
+            set mode = "644"
+            set bits: uint32 = md.mode & exec_bits
+            if bits != zero {
+                rewrite mode = "755"
+            }
+            out.push(blake3_file(all[i]) + " " + mode + " f " + rel)
+        } else {
+            panic(err("special files are not allowed: " + rel, 720, pkg))
+        }
+    }
+    return out
+}
+
+fun old_line_of(ref old: string[], rel: string) -> string {
+    for i in 0..old.len() {
+        if eq(f_path(old[i]), rel) {
+            return old[i]
+        }
+    }
+    return ""
+}
+
+fun in_list(ref fl: string[], rel: string) -> bool {
+    for i in 0..fl.len() {
+        if eq(f_path(fl[i]), rel) {
+            return true
+        }
+    }
+    return false
+}
+
+fun depth_of(rel: string) -> int64 {
+    return split(rel, "/").len()
+}
+
+fun shared_dir(rel: string) -> bool {
+    return depth_of(rel) < 2 || eq(rel, "usr/bin") || eq(rel, "usr/lib") || eq(rel, "usr/share") || eq(rel, "usr/sbin") || eq(rel, "usr/include") || eq(rel, "usr/local")
+}
+
+// Резервная копия и запись в журнал перед удалением/заменой существующего объекта.
+fun backup_existing(txid: string, rel: string, dest: string, old_line: string) {
+    if path_is_symlink(dest) {
+        set tgt = "-"
+        if old_line.len() > 0 && eq(f_kind(old_line), "l") {
+            rewrite tgt = f_hash(old_line)
+        }
+        jr(txid, "oldlink " + dest + " " + tgt)
+        return
+    }
+    set md = file_metadata(dest)
+    set bak = path_join(path_join(tx_dir(txid), "bak"), rel)
+    dir_create_all(path_parent(bak))
+    file_copy(dest, bak)
+    jr(txid, "bak " + dest + " " + bak + " " + cast(md.mode, "string"))
+}
+
+// ── фиксация одного пакета ──────────────────────────────────────────────
+
+fun commit_item(txid: string, ref items: ApplyItem[], n: int64, overwrite: bool) {
+    set name = items[n].name
+    set root = items[n].root
+    set fl = scan_package(name, root, ref items, n)
+    set old = db_files(name)
+
+    // конфликты с чужими файлами
+    for i in 0..fl.len() {
+        if !eq(f_kind(fl[i]), "d") {
+            set rel = f_path(fl[i])
+            if exists_any("/" + rel) && !overwrite {
+                set who = owner_of(rel)
+                if !eq(who, name) {
+                    if who.len() > 0 {
+                        panic(err(rel + " is owned by " + who, 722, name))
+                    }
+                    panic(err(rel + " already exists and belongs to no package (use --overwrite)", 722, name))
+                }
+            }
+        }
+    }
+
+    // ── A. намерение: резервные копии и полный журнал до первого изменения ──
+    dir_create_all(path_join(tx_dir(txid), "db"))
+    if db_has(name) {
+        dir_copy_all(db_dir(name), path_join(path_join(tx_dir(txid), "db"), name))
+        jr(txid, "db " + name + " old")
+    } else {
+        jr(txid, "db " + name + " new")
+    }
+    set targets: string[] = []
+    for i in 0..fl.len() {
+        set rel = f_path(fl[i])
+        set dest = "/" + rel
+        if eq(f_kind(fl[i]), "d") {
+            targets.push(dest)
+            if !dir_exists(dest) {
+                jr(txid, "newdir " + dest)
+            }
+            continue
+        }
+        set target = dest
+        if exists_any(dest) && is_config(rel) && eq(f_kind(fl[i]), "f") {
+            set ol = old_line_of(ref old, rel)
+            if ol.len() > 0 && eq(f_kind(ol), "f") {
+                set disk = blake3_file(dest)
+                if !eq(disk, f_hash(ol)) && !eq(disk, f_hash(fl[i])) {
+                    rewrite target = dest + ".yuki-new"
+                }
+            }
+        }
+        targets.push(target)
+        if exists_any(target) && eq(target, dest) {
+            backup_existing(txid, rel, dest, old_line_of(ref old, rel))
+        } elif !exists_any(target) {
+            jr(txid, "new " + target)
+        }
+    }
+    // файлы старой версии, которых больше нет (изменённые пользователем конфиги остаются)
+    set stale: string[] = []
+    for i in 0..old.len() {
+        if !eq(f_kind(old[i]), "d") {
+            set rel = f_path(old[i])
+            if !in_list(ref fl, rel) && exists_any("/" + rel) {
+                if is_config(rel) && eq(f_kind(old[i]), "f") && !eq(blake3_file("/" + rel), f_hash(old[i])) {
+                    continue
+                }
+                backup_existing(txid, rel, "/" + rel, old[i])
+                stale.push(rel)
+            }
+        }
+    }
+    sync_disk()
+
+    // ── B. запись ──
+    set rootu: uint32 = 0
+    set dir_mode: uint32 = 493
+    for i in 0..fl.len() {
+        set rel = f_path(fl[i])
+        set dest = "/" + rel
+        set kind = f_kind(fl[i])
+        if eq(kind, "d") {
+            if !dir_exists(dest) {
+                dir_create_all(dest)
+                chmod(dest, dir_mode)
+                chown(dest, rootu, rootu)
+            }
+            continue
+        }
+        set target = targets[i]
+        set tmp = target + ".yuki-tmp"
+        if exists_any(tmp) {
+            file_remove(tmp)
+        }
+        if eq(kind, "l") {
+            file_symlink(f_hash(fl[i]), tmp)
+            file_rename(tmp, target)
+            continue
+        }
+        file_copy(root + "/" + rel, tmp)
+        if !eq(blake3_file(tmp), f_hash(fl[i])) {
+            file_remove(tmp)
+            panic(err("file changed while it was being installed: " + rel, 723, name))
+        }
+        set mode: uint32 = 420
+        if eq(f_mode(fl[i]), "755") {
+            rewrite mode = 493
+        }
+        chmod(tmp, mode)
+        chown(tmp, rootu, rootu)
+        file_rename(tmp, target)
+    }
+
+    // ── C. уборка ──
+    for i in 0..stale.len() {
+        file_remove("/" + stale[i])
+    }
+
+    // ── D. база ──
+    set rec = PkgRecord {
+        name: name,
+        version: items[n].version,
+        checksum: items[n].checksum,
+        signer: items[n].signer,
+        origin: items[n].origin,
+        deps: items[n].deps,
+        installed_at: now_secs(),
+        reason: items[n].reason,
+        summary: items[n].summary,
+    }
+    db_write(rec, ref fl)
+    sync_disk()
+}
+
+// ── публичные операции ──────────────────────────────────────────────────
+
+// Установить пакеты одной транзакцией (зависимости раньше зависимых). Возвращает id транзакции.
+public fun apply_transaction(ref items: ApplyItem[], overwrite: bool) -> string {
+    lock_acquire()
+    recover_interrupted()
+    set txid = cast(now_ms(), "string")
+    dir_create_all(tx_dir(txid))
+    file_write_text(path_join(tx_dir(txid), "journal"), "")
+    sus {
+        for n in 0..items.len() {
+            commit_item(txid, ref items, n, overwrite)
+        }
+    } catch e: YukiError {
+        rollback_tx(txid)
+        lock_release()
+        panic(e)
+    } catch {
+        rollback_tx(txid)
+        lock_release()
+        panic(err("transaction failed and was rolled back: " + errkind, 732, txid))
+    }
+    file_write_text(path_join(tx_dir(txid), "COMMITTED"), cast(now_secs(), "string"))
+    set names: string[] = []
+    for n in 0..items.len() {
+        names.push(items[n].name + "-" + items[n].version)
+    }
+    history_add(cast(now_secs(), "string") + " install " + txid + " " + str_join(names, ","))
+    sync_disk()
+    lock_release()
+    return txid
+}
+
+public fun remove_package(name: string, force: bool) -> string {
+    if !db_has(name) {
+        panic(err("package is not installed: " + name, 710, name))
+    }
+    set users = dependents_of(name)
+    if users.len() > 0 && !force {
+        panic(err("required by: " + str_join(users, ", "), 733, name))
+    }
+    lock_acquire()
+    recover_interrupted()
+    set txid = cast(now_ms(), "string")
+    dir_create_all(path_join(tx_dir(txid), "db"))
+    file_write_text(path_join(tx_dir(txid), "journal"), "")
+    sus {
+        set files = db_files(name)
+        dir_copy_all(db_dir(name), path_join(path_join(tx_dir(txid), "db"), name))
+        jr(txid, "db " + name + " old")
+        // намерение: резервные копии и журнал до удаления
+        set doomed: string[] = []
+        for i in 0..files.len() {
+            if !eq(f_kind(files[i]), "d") {
+                set rel = f_path(files[i])
+                if exists_any("/" + rel) {
+                    if is_config(rel) && eq(f_kind(files[i]), "f") && !eq(blake3_file("/" + rel), f_hash(files[i])) {
+                        continue
+                    }
+                    backup_existing(txid, rel, "/" + rel, files[i])
+                    doomed.push(rel)
+                }
+            }
+        }
+        sync_disk()
+        for i in 0..doomed.len() {
+            file_remove("/" + doomed[i])
+        }
+        for k in 0..files.len() {
+            set i = files.len() - 1 - k
+            if eq(f_kind(files[i]), "d") {
+                set rel = f_path(files[i])
+                set dest = "/" + rel
+                if !shared_dir(rel) && dir_exists(dest) && dir_is_empty(dest) {
+                    jr(txid, "deldir " + dest)
+                    dir_remove(dest)
+                }
+            }
+        }
+        db_remove(name)
+    } catch e: YukiError {
+        rollback_tx(txid)
+        lock_release()
+        panic(e)
+    } catch {
+        rollback_tx(txid)
+        lock_release()
+        panic(err("removal failed and was rolled back: " + errkind, 732, txid))
+    }
+    file_write_text(path_join(tx_dir(txid), "COMMITTED"), cast(now_secs(), "string"))
+    history_add(cast(now_secs(), "string") + " remove " + txid + " " + name)
+    sync_disk()
+    lock_release()
+    return txid
+}
+
+// Сверка файлов на диске с базой: строки "missing <path>" и "modified <path>".
+public fun check_package(name: string) -> string[] {
+    set problems: string[] = []
+    set files = db_files(name)
+    for i in 0..files.len() {
+        set rel = f_path(files[i])
+        if eq(f_kind(files[i]), "f") {
+            if !file_exists("/" + rel) {
+                problems.push("missing /" + rel)
+            } elif !eq(blake3_file("/" + rel), f_hash(files[i])) {
+                if is_config(rel) {
+                    problems.push("config modified /" + rel)
+                } else {
+                    problems.push("modified /" + rel)
+                }
+            }
+        } elif eq(f_kind(files[i]), "l") {
+            if !path_is_symlink("/" + rel) {
+                problems.push("missing symlink /" + rel)
+            }
+        }
+    }
+    return problems
+}
+
+public fun rollback_locked(txid: string) {
+    lock_acquire()
+    sus {
+        rollback_tx(txid)
+    } catch e: YukiError {
+        lock_release()
+        panic(e)
+    } catch {
+        lock_release()
+        panic(err("rollback failed: " + errkind, 732, txid))
+    }
+    lock_release()
+}

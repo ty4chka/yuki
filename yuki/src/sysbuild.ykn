@@ -1,0 +1,268 @@
+// sysbuild.ykn — загрузка артефактов и сборка из исходников (только в непривилегированном ребёнке).
+//
+// Загрузки идут параллельно (pool.ykn). Сборка идёт без сети (если запись не разрешила),
+// без доступа к домашним каталогам, в bubblewrap:
+//   --unshare-all, корень только для чтения, /tmp в памяти, писать можно лишь каталог сборки.
+// Команда сборки и список упаковываемых файлов берутся из подписанной записи индекса:
+// сборочный скрипт не решает, что попадёт в систему. Если у файла в записи указан blake3,
+// результат сборки обязан ему соответствовать (воспроизводимость проверяется, а не предполагается).
+// Таймаут 30 минут, затем kill.
+
+load std.process: command_new, run
+load std.fs.files: file_exists, file_read_text, file_write_text, file_copy, file_metadata
+load std.fs.dirs: dir_create_all, dir_list
+load std.fs.paths: path_join, path_parent, path_file_name
+load std.fs.archives.tar: tar_unpack, tar_pack_dir
+load std.os.unix: chmod
+load std.env: get_or
+load std.strings: lines, split, eq, trim, starts_with, slice, str_join
+load .errors: YukiError, err
+load .config: config_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
+load .verify: VerifyError, check_blake3, audit_tar
+load .pipeline: archive_ext
+load .sysplan: PNode, plan_nodes, read_roots
+load .pool: pool_prepare, pool_add, pool_run, pool_raise, jobs_limit
+load .view: InstallView
+
+public fun have_bwrap() -> bool {
+    set ok = false
+    sus {
+        set r = run("bwrap", ["--version"])
+        rewrite ok = r.success()
+    } catch {
+        rewrite ok = false
+    }
+    return ok
+}
+
+// "sandbox" — bubblewrap есть; "unsandboxed" — разрешено явно файлом
+// <config>/allow_unsandboxed_build; "refused" — собирать нельзя.
+public fun build_policy() -> string {
+    if have_bwrap() {
+        return "sandbox"
+    }
+    if file_exists(path_join(config_dir(), "allow_unsandboxed_build")) {
+        return "unsandboxed"
+    }
+    return "refused"
+}
+
+fun pkg_dir(dl: string, name: string) -> string {
+    return path_join(path_join(dl, "pkgs"), name)
+}
+
+// ── где лежит компилятор ────────────────────────────────────────────────
+
+// Каталог, в котором нашёлся исполняемый файл команды сборки; "" — он в /usr (уже виден в песочнице).
+public fun tool_dir(argv0: string) -> string {
+    set found = ""
+    if starts_with(argv0, "/") {
+        rewrite found = path_parent(argv0)
+    } else {
+        set dirs = split(get_or("PATH", ""), ":")
+        for i in 0..dirs.len() {
+            if dirs[i].len() > 0 && file_exists(path_join(dirs[i], argv0)) {
+                rewrite found = dirs[i]
+                break
+            }
+        }
+    }
+    if found.len() == 0 || starts_with(found, "/usr/") || eq(found, "/usr") || starts_with(found, "/bin") || starts_with(found, "/sbin") {
+        return ""
+    }
+    return found
+}
+
+// Корень установки инструмента: родитель каталога bin (например /opt/yukino вместо /opt/yukino/bin).
+public fun tool_root(dir: string) -> string {
+    if eq(path_file_name(dir), "bin") {
+        return path_parent(dir)
+    }
+    return dir
+}
+
+fun extra_binds() -> string[] {
+    set out: string[] = []
+    set f = path_join(config_dir(), "ro_binds")
+    if file_exists(f) {
+        set ls = lines(file_read_text(f))
+        for i in 0..ls.len() {
+            if trim(ls[i]).len() > 0 {
+                out.push("--ro-bind")
+                out.push(trim(ls[i]))
+                out.push(trim(ls[i]))
+            }
+        }
+    }
+    return out
+}
+
+fun bwrap_args(workdir: string, net: bool, tdir: string) -> string[] {
+    set a = ["bwrap", "--die-with-parent", "--new-session", "--unshare-pid", "--unshare-ipc", "--unshare-uts"]
+    if !net {
+        a.push("--unshare-net")
+    } else {
+        a.push("--ro-bind")
+        a.push("/etc/resolv.conf")
+        a.push("/etc/resolv.conf")
+        a.push("--ro-bind")
+        a.push("/etc/ssl")
+        a.push("/etc/ssl")
+    }
+    set path = "/usr/local/bin:/usr/bin"
+    if tdir.len() > 0 {
+        a.push("--ro-bind")
+        a.push(tool_root(tdir))
+        a.push(tool_root(tdir))
+        rewrite path = path + ":" + tdir
+    }
+    set base = ["--ro-bind", "/usr", "/usr", "--symlink", "usr/bin", "/bin", "--symlink", "usr/sbin", "/sbin", "--symlink", "usr/lib", "/lib", "--symlink", "usr/lib64", "/lib64", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--bind", workdir, "/build", "--chdir", "/build", "--clearenv", "--setenv", "HOME", "/build", "--setenv", "PATH", path, "--setenv", "LANG", "C.UTF-8"]
+    for i in 0..base.len() {
+        a.push(base[i])
+    }
+    set ex = extra_binds()
+    for i in 0..ex.len() {
+        a.push(ex[i])
+    }
+    return a
+}
+
+// Одна папка верхнего уровня (как у архивов GitHub) — рабочий каталог внутри неё.
+fun source_root(build_dir: string) -> string {
+    set items = dir_list(build_dir)
+    if items.len() == 1 && file_metadata(items[0]).is_dir {
+        return items[0]
+    }
+    return build_dir
+}
+
+fun run_build(workdir: string, argv: string[], net: bool, policy: string) {
+    set cmd: string[] = ["--kill-after=15", "1800"]
+    set tdir = tool_dir(argv[0])
+    if eq(policy, "sandbox") {
+        set b = bwrap_args(workdir, net, tdir)
+        for i in 0..b.len() {
+            cmd.push(b[i])
+        }
+        for i in 0..argv.len() {
+            cmd.push(argv[i])
+        }
+        set st = command_new("timeout").args(cmd).env_clear().env("PATH", "/usr/local/bin:/usr/bin:/bin").status()
+        if !st.success {
+            panic(err("build failed (exit " + cast(st.code, "string") + ")", 743, workdir))
+        }
+        return
+    }
+    for i in 0..argv.len() {
+        cmd.push(argv[i])
+    }
+    set st = command_new("timeout").args(cmd).env_clear().env("PATH", "/usr/local/bin:/usr/bin:/bin:" + tdir).env("HOME", workdir).current_dir(workdir).status()
+    if !st.success {
+        panic(err("build failed (exit " + cast(st.code, "string") + ")", 743, workdir))
+    }
+}
+
+fun build_source(dl: string, ref pn: PNode) {
+    set policy = build_policy()
+    if eq(policy, "refused") {
+        panic(err("no sandbox available for building " + pn.rel.name + " (install bubblewrap)", 742, pn.rel.name))
+    }
+    set dir = pkg_dir(dl, pn.rel.name)
+    set src = path_join(dir, "src" + archive_ext(pn.rel.src_url))
+    check_blake3(src, pn.rel.src_checksum)
+    audit_tar(src, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, false)
+
+    set build_dir = path_join(dir, "build")
+    dir_create_all(build_dir)
+    tar_unpack(src, build_dir)
+    set work = source_root(build_dir)
+    file_write_text(path_join(dl, "activity"), "building " + pn.rel.name)
+    run_build(work, pn.rel.build, pn.rel.src_net, policy)
+    file_write_text(path_join(dl, "activity"), "packaging " + pn.rel.name)
+
+    // в пакет попадает только то, что перечислено в подписанной записи
+    set out = path_join(dir, "out")
+    dir_create_all(out)
+    for i in 0..pn.rel.files.len() {
+        set p = split(pn.rel.files[i], "|")
+        set from = path_join(work, p[0])
+        set to = path_join(out, p[1])
+        if !file_exists(from) {
+            panic(err("build did not produce " + p[0], 744, pn.rel.name))
+        }
+        set md = file_metadata(from)
+        if !md.is_file || md.is_symlink || md.size > MAX_FILE {
+            panic(err("build output is not a plain file of sane size: " + p[0], 744, pn.rel.name))
+        }
+        // воспроизводимость: результат обязан совпасть с подписанным хешем (если он указан)
+        if p.len() > 3 && p[3].len() > 0 {
+            check_blake3(from, p[3])
+        }
+        dir_create_all(path_parent(to))
+        file_copy(from, to)
+        set mode: uint32 = 420
+        if eq(p[2], "755") {
+            rewrite mode = 493
+        }
+        chmod(to, mode)
+    }
+    tar_pack_dir(path_join(dir, "pkg.tar.zst"), out, "auto")
+}
+
+// Шаг ребёнка «fetch»: параллельно скачать всё, затем собрать одобренное.
+public fun child_fetch(dl: string, approved_path: string) {
+    set roots = read_roots(dl)
+    set nodes = plan_nodes(dl, ref roots, false, false)
+    set ok_names: string[] = []
+    if file_exists(approved_path) {
+        rewrite ok_names = lines(file_read_text(approved_path))
+    }
+
+    // 1. задачи загрузки: готовые сборки и архивы исходников
+    set pdir = path_join(dl, "pool")
+    pool_prepare(pdir)
+    set labels: string[] = []
+    set nidx: int64[] = []
+    set count: int64 = 0
+    for i in 0..nodes.len() {
+        set name = nodes[i].rel.name
+        set dir = pkg_dir(dl, name)
+        if eq(nodes[i].action, "bin") {
+            dir_create_all(dir)
+            pool_add(pdir, count, "file", nodes[i].rel.bin_url, nodes[i].rel.bin_checksum, path_join(dir, "pkg" + archive_ext(nodes[i].rel.bin_url)), name)
+            labels.push(name)
+            nidx.push(-1)
+            rewrite count += 1
+        } elif eq(nodes[i].action, "src") {
+            set allowed = false
+            for k in 0..ok_names.len() {
+                if eq(trim(ok_names[k]), name) {
+                    rewrite allowed = true
+                }
+            }
+            if !allowed {
+                panic(err("building " + name + " was not approved", 745, name))
+            }
+            dir_create_all(dir)
+            pool_add(pdir, count, "file", nodes[i].rel.src_url, nodes[i].rel.src_checksum, path_join(dir, "src" + archive_ext(nodes[i].rel.src_url)), name)
+            labels.push(name)
+            nidx.push(-1)
+            rewrite count += 1
+        } elif eq(nodes[i].action, "none") {
+            panic(err("nothing to install for " + name, 752, name))
+        }
+    }
+    if count > 0 {
+        set quiet = init InstallView("", false)
+        pool_run(pdir, count, jobs_limit(), ref nidx, ref ~quiet)
+        pool_raise(pdir, count, labels)
+    }
+
+    // 2. сборка (по очереди: она грузит процессор, а не сеть)
+    for i in 0..nodes.len() {
+        if eq(nodes[i].action, "src") {
+            build_source(dl, ref nodes[i])
+        }
+    }
+    file_write_text(path_join(dl, "activity"), "")
+}

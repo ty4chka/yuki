@@ -1,0 +1,117 @@
+// selftest.ykn — `yuki selftest`: проверка собранного бинарника на известных значениях.
+// Запускать сразу после первой сборки: хеши, подписи, потоки, политика путей, JSON, файлы.
+// Сети не нужно, ничего вне временного каталога не трогается.
+
+load std.env: get_or, set_env
+load std.threads: spawn, join, sleep
+load std.json: json_parse, json_stringify
+load std.hash: hex_to_bytes, bytes_to_hex, blake3_str
+load std.hash.blake3: blake3_file
+load std.crypto: ed25519_public_key, ed25519_sign, random_bytes
+load std.fs.files: file_exists, file_write_text, file_read_text, file_remove
+load std.fs.dirs: dir_create_all, dir_remove_all
+load std.fs.defaults: dir_temp
+load std.fs.paths: path_join
+load std.strings: eq, contains, slice
+load .errors: YukiError, err
+load .config: host_target
+load std.io: println
+load .ui: ok, bad, info, c_dim
+load .util: valid_name, valid_version, ver_cmp, edit_distance, is_hex, now_ms
+load .verify: is_safe_rel_path, link_target_ok, checksum_ok_format, verify_text, signed_message
+load .policy: policy_check
+
+fun println_header() {
+    info("running self-tests")
+}
+
+fun slice_from(s: string, from: int64) -> string {
+    return slice(s, from, s.len())
+}
+
+fun set_env_local(path: string) {
+    set_env("YUKI_SELFTEST_FILE", path)
+}
+
+fun check(cond: bool, label: string, ref ~failed: int64) {
+    if cond {
+        ok(label)
+    } else {
+        bad(label)
+        rewrite failed += 1
+    }
+}
+
+#[thunk]
+fun selftest_thread(arg: ptr<void>) {
+    set path = get_or("YUKI_SELFTEST_FILE", "")
+    sus {
+        file_write_text(path, "thread-" + cast(cast(arg, "int64"), "string"))
+    } catch {
+    }
+}
+
+public fun cmd_selftest() {
+    set failed: int64 = 0
+    println_header()
+
+    // хеши: известное значение BLAKE3 пустой строки
+    check(eq(blake3_str(""), "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adc112b7cc9a93cae41f3262"), "blake3 of the empty string matches the reference", ref ~failed)
+
+    // подписи: круг и подделка, доменный разделитель
+    set seed: bytes = random_bytes(32)
+    set pubk: bytes = ed25519_public_key(ref seed)
+    set pub_hex = bytes_to_hex(ref pubk)
+    set msg: bytes = cast(signed_message("hello"), "bytes")
+    set sig: bytes = ed25519_sign(ref seed, ref msg)
+    set sig_hex = bytes_to_hex(ref sig)
+    check(pub_hex.len() == 64 && sig_hex.len() == 128, "ed25519 key and signature sizes (32 and 64 bytes)", ref ~failed)
+    check(verify_text(pub_hex, "hello", sig_hex), "a fresh signature verifies", ref ~failed)
+    check(!verify_text(pub_hex, "hellp", sig_hex), "a changed message is rejected", ref ~failed)
+    check(!verify_text(pub_hex, "hello", "00" + slice_from(sig_hex, 2)), "a damaged signature is rejected", ref ~failed)
+    set other: bytes = random_bytes(32)
+    set other_pub: bytes = ed25519_public_key(ref other)
+    check(!verify_text(bytes_to_hex(ref other_pub), "hello", sig_hex), "a different key is rejected", ref ~failed)
+
+    // имена, версии, расстояния
+    check(valid_name("ripgrep") && valid_name("a-b_c1") && !valid_name("-x") && !valid_name("Up") && !valid_name("a b") && !valid_name(""), "package name rules", ref ~failed)
+    check(valid_version("1.2.3") && !valid_version("1.2") && !valid_version("1.2.x") && !valid_version("01.2.3."), "version rules", ref ~failed)
+    check(ver_cmp("1.10.0", "1.9.9") == 1 && ver_cmp("1.2.3", "1.2.3") == 0 && ver_cmp("0.9.9", "1.0.0") == -1, "version comparison is numeric", ref ~failed)
+    check(edit_distance("instal", "install") == 1 && edit_distance("abc", "abc") == 0, "edit distance", ref ~failed)
+    check(checksum_ok_format("blake3:" + blake3_str("x")) && !checksum_ok_format("blake3:xyz") && !checksum_ok_format("sha256:" + blake3_str("x")), "checksum format", ref ~failed)
+
+    // пути и симлинки
+    check(is_safe_rel_path("usr/bin/rg") && !is_safe_rel_path("../x") && !is_safe_rel_path("/etc/x") && !is_safe_rel_path("a/../../b") && !is_safe_rel_path("a\\b"), "safe relative paths", ref ~failed)
+    check(link_target_ok("usr/bin/foo", "../lib/foo") && !link_target_ok("usr/bin/foo", "/etc/passwd") && !link_target_ok("usr/bin/foo", "../../../etc/passwd"), "symlink targets stay inside the package tree", ref ~failed)
+    check(policy_check("x", "usr/bin/x").len() == 0, "policy allows usr/bin/x", ref ~failed)
+    check(policy_check("x", "etc/sudoers.d/x").len() > 0 && policy_check("x", "boot/vmlinuz").len() > 0 && policy_check("x", "etc/yuki/trusted_keys").len() > 0, "policy refuses protected paths", ref ~failed)
+    check(policy_check("x", "usr/bin/yuki").len() > 0 && policy_check("yuki", "usr/bin/yuki").len() == 0, "only the yuki package may replace yuki", ref ~failed)
+
+    // JSON: повторная сериализация стабильна (на этом держатся подписи содержимого)
+    set j = "{\"b\":[1,2,{\"c\":\"d\"}],\"a\":true}"
+    set once = json_stringify(json_parse(j))
+    check(eq(json_stringify(json_parse(once)), once), "json parse and stringify are stable", ref ~failed)
+
+    // файлы и хеш файла
+    set dir = path_join(dir_temp(), "yuki-selftest-" + cast(now_ms(), "string"))
+    dir_create_all(dir)
+    set f = path_join(dir, "a.txt")
+    file_write_text(f, "yuki")
+    check(file_exists(f) && eq(file_read_text(f), "yuki") && eq(blake3_file(f), blake3_str("yuki")), "file write, read and blake3_file agree with blake3_str", ref ~failed)
+
+    // потоки: spawn/join работает и поток видит окружение
+    set tf = path_join(dir, "thread.txt")
+    set_env_local(tf)
+    set h = spawn(cast(selftest_thread, "ptr<void>"), cast(7, "ptr<void>"))
+    join(h)
+    check(file_exists(tf) && eq(file_read_text(tf), "thread-7"), "a worker thread starts, runs and joins", ref ~failed)
+    dir_remove_all(dir)
+
+    check(contains(host_target(), "-"), "platform name looks like os-cpu: " + host_target(), ref ~failed)
+
+    println("")
+    if failed > 0 {
+        panic(err(cast(failed, "string") + " self-test check(s) failed", 799, "selftest"))
+    }
+    ok("all checks passed " + c_dim("(this build can hash, sign, verify and run threads)"))
+}

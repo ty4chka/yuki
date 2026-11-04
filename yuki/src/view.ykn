@@ -1,0 +1,246 @@
+// view.ykn — живая панель установки: фазы сверху, растущее дерево зависимостей снизу.
+//
+//   yuki 0.1.0  ·  add json-yukino
+//   ────────────────────────────────────────────────────
+//   ✔ resolve  3 packages · signed by 3fa9 c07d
+//   ◐ fetch    ████████░░░░ 62%  2.1 MB/s
+//   ○ install
+//
+//   json-yukino 1.2.0  ✔ verified
+//   ├─ ansi-kit 2.0.1  ◐ █████░░░░░ 48%
+//   └─ tomlkit 0.4.0   ○ queued
+//
+// Когда анимация выключена (CI, пайп, TERM=dumb, тема), панель не рисуется:
+// остаются обычные строки «✔ …» и итоговое дерево в конце.
+
+load std.stdotool.live_area: LiveArea
+load std.io: println
+load std.strings: pad_end
+load .ui: ok, rule, c_accent, c_good, c_warn, c_bad, c_dim, c_speed, c_bold, render_bar
+load .theme: sym, spinner_frames, paint
+load .util: now_ms
+
+public class InstallView {
+    public animated: bool
+    public area: LiveArea
+    public title: string
+    public names: string[]
+    public versions: string[]
+    public parents: int64[]
+    public states: int32[]
+    public pcts: int64[]
+    public notes: string[]
+    public phase: int64
+    public tick: int64
+    public last_draw: int64
+    public speed: string
+    public activity: string
+
+    // states: 0 в очереди, 1 качается, 2 скачан, 3 проверен, 4 ошибка
+    fun init(title: string, animated: bool) {
+        rewrite this.animated = animated
+        rewrite this.area = init LiveArea()
+        rewrite this.title = title
+        rewrite this.names = []
+        rewrite this.versions = []
+        rewrite this.parents = []
+        rewrite this.states = []
+        rewrite this.pcts = []
+        rewrite this.notes = ["", "", ""]
+        rewrite this.phase = 0
+        rewrite this.tick = 0
+        rewrite this.last_draw = 0
+        rewrite this.speed = ""
+        rewrite this.activity = ""
+    }
+
+    public fun add_node(name: string, version: string, parent: int64) -> int64 {
+        this.names.push(name)
+        this.versions.push(version)
+        this.parents.push(parent)
+        this.states.push(0)
+        this.pcts.push(0)
+        return this.names.len() - 1
+    }
+
+    public fun set_state(i: int64, st: int32) {
+        if i >= 0 && i < this.states.len() {
+            rewrite this.states[i] = st
+            if st >= 2 {
+                rewrite this.pcts[i] = 100
+            }
+        }
+    }
+
+    public fun set_pct(i: int64, p: int64) {
+        if i >= 0 && i < this.pcts.len() {
+            rewrite this.pcts[i] = p
+        }
+    }
+
+    public fun set_speed(text: string) {
+        rewrite this.speed = text
+    }
+
+    public fun set_activity(text: string) {
+        rewrite this.activity = text
+    }
+
+    // Строка в обычном режиме; при живой панели молчит, чтобы не ломать перерисовку.
+    public fun log(msg: string) {
+        if !this.animated {
+            ok(msg)
+        }
+    }
+
+    // Перейти к фазе p; note описывает результат предыдущей.
+    public fun set_phase(p: int64, note: string) {
+        if p > 0 && p <= 3 {
+            rewrite this.notes[p - 1] = note
+        }
+        rewrite this.phase = p
+        if !this.animated {
+            ok(note)
+        } else {
+            this.draw(true)
+        }
+    }
+
+    fun last_child(i: int64) -> bool {
+        for j in (i + 1)..this.parents.len() {
+            if this.parents[j] == this.parents[i] {
+                return false
+            }
+        }
+        return true
+    }
+
+    fun prefix(i: int64) -> string {
+        set p = this.parents[i]
+        if p < 0 {
+            return ""
+        }
+        set pre = sym("branch")
+        if this.last_child(i) {
+            rewrite pre = sym("last")
+        }
+        set anc = p
+        while this.parents[anc] >= 0 {
+            set seg = sym("pipe") + "  "
+            if this.last_child(anc) {
+                rewrite seg = "   "
+            }
+            rewrite pre = seg + pre
+            rewrite anc = this.parents[anc]
+        }
+        return pre + " "
+    }
+
+    fun spin() -> string {
+        set fr = spinner_frames()
+        return fr[this.tick % fr.len()]
+    }
+
+    fun node_state(i: int64) -> string {
+        set st = this.states[i]
+        if st == 1 {
+            return c_warn(this.spin()) + " " + render_bar(this.pcts[i], 100, 10) + " " + cast(this.pcts[i], "string") + "%"
+        }
+        if st == 2 {
+            return c_good(sym("ok")) + " " + c_dim("downloaded")
+        }
+        if st == 3 {
+            return c_good(sym("ok")) + " " + c_dim("verified")
+        }
+        if st == 4 {
+            return c_bad(sym("fail")) + " failed"
+        }
+        return c_dim(sym("pending")) + " " + c_dim("queued")
+    }
+
+    fun active_note(p: int64) -> string {
+        if p == 0 {
+            return c_dim("resolving " + cast(this.names.len(), "string") + " found")
+        }
+        if p == 1 {
+            set sum: int64 = 0
+            for i in 0..this.pcts.len() {
+                rewrite sum += this.pcts[i]
+            }
+            set total: int64 = 100 * this.names.len()
+            if total == 0 {
+                return ""
+            }
+            set tail = c_speed(this.speed)
+            if this.activity.len() > 0 {
+                rewrite tail = c_warn(this.activity)
+            }
+            return render_bar(sum, total, 20) + " " + cast(sum * 100 / total, "string") + "%  " + tail
+        }
+        return c_dim("writing yuki.toml")
+    }
+
+    fun tree_lines() -> string[] {
+        set out: string[] = []
+        for i in 0..this.names.len() {
+            set label = c_accent(this.names[i]) + " " + c_dim(this.versions[i])
+            if this.parents[i] < 0 {
+                rewrite label = c_bold(this.names[i]) + " " + c_good(this.versions[i])
+            }
+            out.push("  " + c_dim(this.prefix(i)) + label + "  " + this.node_state(i))
+        }
+        return out
+    }
+
+    fun frame() -> string[] {
+        set out: string[] = []
+        out.push(paint("logo", "yuki") + c_dim("  " + sym("dot") + "  ") + this.title)
+        out.push("  " + rule(52))
+        set labels = ["resolve", "fetch", "install"]
+        for p in 0..3 {
+            set icon = c_dim(sym("pending"))
+            set note = ""
+            if p < this.phase {
+                rewrite icon = c_good(sym("ok"))
+                rewrite note = this.notes[p]
+            } elif p == this.phase {
+                rewrite icon = c_warn(this.spin())
+                rewrite note = this.active_note(p)
+            }
+            out.push("  " + icon + " " + c_dim(pad_end(labels[p], 9)) + note)
+        }
+        out.push("")
+        set tl = this.tree_lines()
+        for i in 0..tl.len() {
+            out.push(tl[i])
+        }
+        return out
+    }
+
+    public fun draw(force: bool) {
+        if !this.animated {
+            return
+        }
+        set now = now_ms()
+        if !force && now - this.last_draw < 80 {
+            return
+        }
+        rewrite this.last_draw = now
+        rewrite this.tick += 1
+        this.area.render(this.frame())
+    }
+
+    // Закрыть панель: в живом режиме — оставить последний кадр, иначе — напечатать дерево.
+    public fun finish() {
+        if this.animated {
+            rewrite this.phase = 3
+            this.area.render(this.frame())
+            this.area.finish()
+        } else {
+            set tl = this.tree_lines()
+            for i in 0..tl.len() {
+                println(tl[i])
+            }
+        }
+    }
+}

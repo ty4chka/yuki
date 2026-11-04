@@ -1,0 +1,243 @@
+// manifest.ykn — правка yuki.toml текстом (комментарии и форматирование сохраняются).
+// Зависимости yuki живут в [libs.runtime] и выглядят так:
+//   name = { link = "https://…/x.tar.gz", checksum = "blake3:…" } # yuki:1.2.0
+// yukino сам скачает и сверит checksum; хвост "# yuki:<версия>" читает только yuki.
+
+load std.fs.files: file_exists, file_read_text, file_write_text, file_rename
+load std.strings: lines, trim, starts_with, index_of, index_of_from, slice, eq, str_join, split
+load .errors: YukiError, err
+
+static MANIFEST: string = "yuki.toml"
+static SECTION: string = "[libs.runtime]"
+
+public struct Dep {
+    name: string
+    version: string
+    checksum: string
+    url: string
+    via: string
+}
+
+fun read_manifest() -> string {
+    if !file_exists(MANIFEST) {
+        panic(err("yuki.toml not found in the current directory", 501, MANIFEST))
+    }
+    return file_read_text(MANIFEST)
+}
+
+// Запись через временный файл и rename: manifest не остаётся наполовину записанным.
+fun write_manifest(text: string) {
+    set tmp = MANIFEST + ".yuki-tmp"
+    file_write_text(tmp, text)
+    file_rename(tmp, MANIFEST)
+}
+
+fun line_name(line: string) -> string {
+    set t = trim(line)
+    if t.len() == 0 || starts_with(t, "#") || starts_with(t, "[") {
+        return ""
+    }
+    set i = index_of(t, "=")
+    if i <= 0 {
+        return ""
+    }
+    return trim(slice(t, 0, i))
+}
+
+fun quoted(t: string, key: string) -> string {
+    set marker = key + " = \""
+    set s = index_of(t, marker)
+    if s < 0 {
+        return ""
+    }
+    set start = s + marker.len()
+    set e = index_of_from(t, "\"", start)
+    if e < 0 {
+        return ""
+    }
+    return slice(t, start, e)
+}
+
+// via — имя пакета, который потянул эту зависимость ("" для прямых)
+public fun dep_line(name: string, url: string, checksum: string, version: string, via: string) -> string {
+    set tail = version
+    if via.len() > 0 {
+        rewrite tail = version + " via " + via
+    }
+    return name + " = { link = \"" + url + "\", checksum = \"" + checksum + "\" } # yuki:" + tail
+}
+
+// Добавить или заменить зависимость в [libs.runtime].
+public fun upsert_dep(name: string, line: string) {
+    set ls = lines(read_manifest())
+    set out: string[] = []
+    set in_section = false
+    set had_section = false
+    set done = false
+    for i in 0..ls.len() {
+        set t = trim(ls[i])
+        if eq(t, SECTION) {
+            rewrite in_section = true
+            rewrite had_section = true
+            out.push(ls[i])
+            continue
+        }
+        if in_section && starts_with(t, "[") {
+            if !done {
+                out.push(line)
+                rewrite done = true
+            }
+            rewrite in_section = false
+        }
+        if in_section && eq(line_name(ls[i]), name) {
+            if !done {
+                out.push(line)
+                rewrite done = true
+            }
+            continue
+        }
+        out.push(ls[i])
+    }
+    if in_section && !done {
+        out.push(line)
+    }
+    if !had_section {
+        out.push("")
+        out.push(SECTION)
+        out.push(line)
+    }
+    write_manifest(str_join(out, "\n") + "\n")
+}
+
+public fun remove_dep(name: string) -> bool {
+    set ls = lines(read_manifest())
+    set out: string[] = []
+    set in_section = false
+    set removed = false
+    for i in 0..ls.len() {
+        set t = trim(ls[i])
+        if eq(t, SECTION) {
+            rewrite in_section = true
+        } elif starts_with(t, "[") {
+            rewrite in_section = false
+        }
+        if in_section && eq(line_name(ls[i]), name) {
+            rewrite removed = true
+            continue
+        }
+        out.push(ls[i])
+    }
+    if removed {
+        write_manifest(str_join(out, "\n") + "\n")
+    }
+    return removed
+}
+
+// Зависимости, которыми управляет yuki (строки с маркером "# yuki:").
+public fun list_deps() -> Dep[] {
+    set out: Dep[] = []
+    set ls = lines(read_manifest())
+    set in_section = false
+    for i in 0..ls.len() {
+        set t = trim(ls[i])
+        if eq(t, SECTION) {
+            rewrite in_section = true
+            continue
+        }
+        if starts_with(t, "[") {
+            rewrite in_section = false
+        }
+        if in_section {
+            set n = line_name(t)
+            set m = index_of(t, "# yuki:")
+            if n.len() > 0 && m >= 0 {
+                set tail = split(trim(slice(t, m + 7, t.len())), " ")
+                set via = ""
+                if tail.len() >= 3 && eq(tail[1], "via") {
+                    rewrite via = tail[2]
+                }
+                out.push(Dep {
+                    name: n,
+                    version: tail[0],
+                    checksum: quoted(t, "checksum"),
+                    url: quoted(t, "link"),
+                    via: via,
+                })
+            }
+        }
+    }
+    return out
+}
+
+// via — список владельцев через запятую: пакет остаётся, пока он нужен хотя бы одному.
+public fun merge_via(existing: string, add: string) -> string {
+    if add.len() == 0 {
+        return existing
+    }
+    set parts = split(existing, ",")
+    for i in 0..parts.len() {
+        if eq(parts[i], add) {
+            return existing
+        }
+    }
+    if existing.len() == 0 {
+        return add
+    }
+    return existing + "," + add
+}
+
+fun without_owner(via: string, owner: string) -> string {
+    set out: string[] = []
+    set parts = split(via, ",")
+    for i in 0..parts.len() {
+        if parts[i].len() > 0 && !eq(parts[i], owner) {
+            out.push(parts[i])
+        }
+    }
+    return str_join(out, ",")
+}
+
+fun has_owner(via: string, owner: string) -> bool {
+    set parts = split(via, ",")
+    for i in 0..parts.len() {
+        if eq(parts[i], owner) {
+            return true
+        }
+    }
+    return false
+}
+
+// Убрать owner из владельцев всех зависимостей; зависимости без владельцев удаляются
+// (и цепочкой их собственные). Общие зависимости остаются. Возвращает число удалённых.
+public fun prune_owner(owner: string) -> int64 {
+    set pending: string[] = [owner]
+    set removed: int64 = 0
+    while pending.len() > 0 {
+        set cur = pending[pending.len() - 1]
+        pending.pop()
+        set deps = list_deps()
+        for i in 0..deps.len() {
+            if has_owner(deps[i].via, cur) {
+                set rest = without_owner(deps[i].via, cur)
+                if rest.len() == 0 {
+                    remove_dep(deps[i].name)
+                    pending.push(deps[i].name)
+                    rewrite removed += 1
+                } else {
+                    upsert_dep(deps[i].name, dep_line(deps[i].name, deps[i].url, deps[i].checksum, deps[i].version, rest))
+                }
+            }
+        }
+    }
+    return removed
+}
+
+public fun via_of(name: string) -> string {
+    set deps = list_deps()
+    for i in 0..deps.len() {
+        if eq(deps[i].name, name) {
+            return deps[i].via
+        }
+    }
+    return ""
+}

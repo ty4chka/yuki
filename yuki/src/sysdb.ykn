@@ -1,0 +1,230 @@
+// sysdb.ykn — база установленных пакетов (как /var/lib/pacman/local).
+//
+//   <state>/db/<имя>/desc    key=value: name version checksum signer origin deps installed_at
+//   <state>/db/<имя>/files   "<blake3> <mode> <f|d> <путь>" по строке на объект пакета
+//   <state>/history          журнал транзакций (только дописывается)
+
+load std.fs.files: file_exists, file_read_text, file_write_text, file_append_text
+load std.fs.dirs: dir_create_all, dir_exists, dir_list, dir_remove_all
+load std.fs.paths: path_join, path_file_name
+load std.strings: lines, split, trim, eq, slice, index_of, str_join, parse_int
+load .errors: YukiError, err
+load .config: state_dir, config_dir
+
+public struct PkgRecord {
+    name: string
+    version: string
+    checksum: string
+    signer: string
+    origin: string
+    deps: string
+    installed_at: int64
+    reason: string
+    summary: string
+}
+
+public fun db_root() -> string {
+    return path_join(state_dir(), "db")
+}
+
+public fun db_dir(name: string) -> string {
+    return path_join(db_root(), name)
+}
+
+public fun db_has(name: string) -> bool {
+    return dir_exists(db_dir(name))
+}
+
+public fun db_names() -> string[] {
+    set out: string[] = []
+    if !dir_exists(db_root()) {
+        return out
+    }
+    set raw = dir_list(db_root())
+    for i in 0..raw.len() {
+        out.push(path_file_name(raw[i]))
+    }
+    return out
+}
+
+fun kv_get(ls: string[], key: string) -> string {
+    for i in 0..ls.len() {
+        set p = index_of(ls[i], "=")
+        if p > 0 && eq(slice(ls[i], 0, p), key) {
+            return slice(ls[i], p + 1, ls[i].len())
+        }
+    }
+    return ""
+}
+
+public fun db_read(name: string) -> PkgRecord {
+    set f = path_join(db_dir(name), "desc")
+    if !file_exists(f) {
+        panic(err("package is not installed: " + name, 710, name))
+    }
+    set ls = lines(file_read_text(f))
+    return PkgRecord {
+        name: kv_get(ls, "name"),
+        version: kv_get(ls, "version"),
+        checksum: kv_get(ls, "checksum"),
+        signer: kv_get(ls, "signer"),
+        origin: kv_get(ls, "origin"),
+        deps: kv_get(ls, "deps"),
+        installed_at: parse_int(kv_get(ls, "installed_at")) ?? 0,
+        reason: kv_get(ls, "reason"),
+        summary: kv_get(ls, "summary"),
+    }
+}
+
+// files — строки "<hash> <mode> <kind> <path>"
+public fun db_write(rec: PkgRecord, ref files: string[]) {
+    dir_create_all(db_dir(rec.name))
+    set d = [
+        "name=" + rec.name,
+        "version=" + rec.version,
+        "checksum=" + rec.checksum,
+        "signer=" + rec.signer,
+        "origin=" + rec.origin,
+        "deps=" + rec.deps,
+        "installed_at=" + cast(rec.installed_at, "string"),
+        "reason=" + rec.reason,
+        "summary=" + rec.summary
+    ]
+    file_write_text(path_join(db_dir(rec.name), "desc"), str_join(d, "\n") + "\n")
+    file_write_text(path_join(db_dir(rec.name), "files"), str_join(files, "\n") + "\n")
+}
+
+public fun db_files(name: string) -> string[] {
+    set f = path_join(db_dir(name), "files")
+    set out: string[] = []
+    if !file_exists(f) {
+        return out
+    }
+    set ls = lines(file_read_text(f))
+    for i in 0..ls.len() {
+        if trim(ls[i]).len() > 0 {
+            out.push(trim(ls[i]))
+        }
+    }
+    return out
+}
+
+public fun db_remove(name: string) {
+    dir_remove_all(db_dir(name))
+}
+
+// разбор строки files
+public fun f_hash(line: string) -> string {
+    return split(line, " ")[0]
+}
+
+public fun f_mode(line: string) -> string {
+    return split(line, " ")[1]
+}
+
+public fun f_kind(line: string) -> string {
+    return split(line, " ")[2]
+}
+
+public fun f_path(line: string) -> string {
+    set p = split(line, " ")
+    return p[3]
+}
+
+// Кто владеет файлом ("" — никто).
+public fun owner_of(rel: string) -> string {
+    set names = db_names()
+    for i in 0..names.len() {
+        set fl = db_files(names[i])
+        for j in 0..fl.len() {
+            if eq(f_path(fl[j]), rel) {
+                return names[i]
+            }
+        }
+    }
+    return ""
+}
+
+// Кто из установленных пакетов зависит от name.
+public fun dependents_of(name: string) -> string[] {
+    set out: string[] = []
+    set names = db_names()
+    for i in 0..names.len() {
+        set rec = db_read(names[i])
+        set ds = split(rec.deps, ",")
+        for j in 0..ds.len() {
+            if eq(ds[j], name) {
+                out.push(names[i])
+            }
+        }
+    }
+    return out
+}
+
+public fun history_add(line: string) {
+    dir_create_all(state_dir())
+    file_append_text(path_join(state_dir(), "history"), line + "\n")
+}
+
+// Пакеты, которые upgrade не трогает (<config>/hold, по имени в строке).
+public fun held_names() -> string[] {
+    set out: string[] = []
+    set f = path_join(config_dir(), "hold")
+    if file_exists(f) {
+        set ls = lines(file_read_text(f))
+        for i in 0..ls.len() {
+            if trim(ls[i]).len() > 0 {
+                out.push(trim(ls[i]))
+            }
+        }
+    }
+    return out
+}
+
+public fun is_held(name: string) -> bool {
+    set h = held_names()
+    for i in 0..h.len() {
+        if eq(h[i], name) {
+            return true
+        }
+    }
+    return false
+}
+
+// Пакет, который поставили как зависимость, а потом попросили явно, становится явным.
+public fun mark_explicit(name: string) {
+    set r = db_read(name)
+    if !eq(r.reason, "explicit") {
+        set fl = db_files(name)
+        set upd = PkgRecord {
+            name: r.name,
+            version: r.version,
+            checksum: r.checksum,
+            signer: r.signer,
+            origin: r.origin,
+            deps: r.deps,
+            installed_at: r.installed_at,
+            reason: "explicit",
+            summary: r.summary,
+        }
+        db_write(upd, ref fl)
+    }
+}
+
+public fun is_explicit(name: string) -> bool {
+    set r = db_read(name)
+    return !eq(r.reason, "dep")
+}
+
+// Зависимости, у которых больше нет зависимых: кандидаты на autoremove.
+public fun orphans() -> string[] {
+    set out: string[] = []
+    set names = db_names()
+    for i in 0..names.len() {
+        set r = db_read(names[i])
+        if eq(r.reason, "dep") && dependents_of(names[i]).len() == 0 {
+            out.push(names[i])
+        }
+    }
+    return out
+}

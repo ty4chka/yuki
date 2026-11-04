@@ -1,0 +1,122 @@
+// util.ykn — время, валидация имён/версий/hex.
+
+load std.datetime: now_utc, to_unix_secs, to_unix_millis
+load std.strings: split, parse_int, slice, contains, eq
+
+public fun now_secs() -> int64 {
+    set t = now_utc()
+    return to_unix_secs(ref t)
+}
+
+public fun now_ms() -> int64 {
+    set t = now_utc()
+    return to_unix_millis(ref t)
+}
+
+public fun is_hex(s: string) -> bool {
+    if s.len() == 0 {
+        return false
+    }
+    for i in 0..s.len() {
+        if !contains("0123456789abcdefABCDEF", slice(s, i, i + 1)) {
+            return false
+        }
+    }
+    return true
+}
+
+// [a-z0-9_-], 1..64 символа, не начинается с - или _
+public fun valid_name(name: string) -> bool {
+    if name.len() == 0 || name.len() > 64 {
+        return false
+    }
+    if contains("-_", slice(name, 0, 1)) {
+        return false
+    }
+    for i in 0..name.len() {
+        if !contains("abcdefghijklmnopqrstuvwxyz0123456789_-", slice(name, i, i + 1)) {
+            return false
+        }
+    }
+    return true
+}
+
+// строго MAJOR.MINOR.PATCH, только цифры
+public fun valid_version(v: string) -> bool {
+    if v.len() == 0 || v.len() > 32 {
+        return false
+    }
+    set parts = split(v, ".")
+    if parts.len() != 3 {
+        return false
+    }
+    for i in 0..3 {
+        if !is_hex(parts[i]) {
+            return false
+        }
+        set n = parse_int(parts[i])
+        if n == null {
+            return false
+        }
+    }
+    return true
+}
+
+// 1 если a > b, -1 если a < b, 0 если равны. Вызывать только после valid_version.
+public fun ver_cmp(a: string, b: string) -> int32 {
+    set pa = split(a, ".")
+    set pb = split(b, ".")
+    for i in 0..3 {
+        set x: int64 = parse_int(pa[i]) ?? 0
+        set y: int64 = parse_int(pb[i]) ?? 0
+        if x > y {
+            return 1
+        }
+        if x < y {
+            return -1
+        }
+    }
+    return 0
+}
+
+// "имя@1.2.3" — зависимость с точным закреплением версии
+public fun valid_dep_spec(s: string) -> bool {
+    set p = split(s, "@")
+    return p.len() == 2 && valid_name(p[0]) && valid_version(p[1])
+}
+
+public fun dep_name(s: string) -> string {
+    return split(s, "@")[0]
+}
+
+public fun dep_version(s: string) -> string {
+    return split(s, "@")[1]
+}
+
+// Для подсказки «did you mean»: число правок между словами.
+public fun edit_distance(a: string, b: string) -> int64 {
+    set prev: int64[] = []
+    for j in 0..(b.len() + 1) {
+        prev.push(j)
+    }
+    for i in 1..(a.len() + 1) {
+        set cur: int64[] = []
+        cur.push(i)
+        for j in 1..(b.len() + 1) {
+            set cost: int64 = 1
+            if eq(slice(a, i - 1, i), slice(b, j - 1, j)) {
+                rewrite cost = 0
+            }
+            set best = prev[j] + 1
+            if cur[j - 1] + 1 < best {
+                rewrite best = cur[j - 1] + 1
+            }
+            if prev[j - 1] + cost < best {
+                rewrite best = prev[j - 1] + cost
+            }
+            cur.push(best)
+        }
+        rewrite prev = cur
+    }
+    return prev[b.len()]
+}

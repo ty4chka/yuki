@@ -1,0 +1,242 @@
+// pool.ykn — параллельные загрузки.
+//
+// Пул потоков (std.threads). Данные между потоками не разделяются: у каждой задачи свой
+// каталог-почтовый ящик <dir>/ с файлами
+//   job-<i>     "kind<TAB>url<TAB>checksum<TAB>dest<TAB>label"
+//   prog-<i>    "получено всего"  (пишет воркер)
+//   state-<i>   "ok\n<результат>" или "err\n<код>\n<сообщение>"  (пишет воркер)
+// Рисует и опрашивает один поток (главный), воркеры скачивают и сразу проверяют хеш,
+// поэтому анимация не замирает, пока считается blake3.
+//
+// kind "cache" — проектный режим: fetch_verified (кэш, хеш, аудит).
+// kind "file"  — системный режим: скачать в dest и сверить blake3 (аудит делает root).
+
+load std.threads: spawn, join, is_finished, sleep, hardware_concurrency
+load std.env: get_or, set_env
+load std.fs.files: file_exists, file_read_text, file_write_text
+load std.fs.dirs: dir_create_all
+load std.fs.paths: path_join, path_parent
+load std.stdotool.format: format_speed
+load std.strings: split, parse_int, eq
+load .errors: YukiError, err
+load .config: MAX_DOWNLOAD
+load .fetch: download
+load .pipeline: fetch_verified
+load .verify: VerifyError, check_blake3
+load .view: InstallView
+load .util: now_ms
+
+fun p_job(dir: string, i: int64) -> string {
+    return path_join(dir, "job-" + cast(i, "string"))
+}
+
+fun p_prog(dir: string, i: int64) -> string {
+    return path_join(dir, "prog-" + cast(i, "string"))
+}
+
+fun p_state(dir: string, i: int64) -> string {
+    return path_join(dir, "state-" + cast(i, "string"))
+}
+
+public fun pool_prepare(dir: string) {
+    dir_create_all(dir)
+}
+
+// kind: "cache" | "file"
+public fun pool_add(dir: string, i: int64, kind: string, url: string, checksum: string, dest: string, label: string) {
+    file_write_text(p_job(dir, i), kind + "\t" + url + "\t" + checksum + "\t" + dest + "\t" + label)
+}
+
+fun run_job(dir: string, i: int64) {
+    set parts = split(file_read_text(p_job(dir, i)), "\t")
+    set kind = parts[0]
+    set url = parts[1]
+    set checksum = parts[2]
+    set dest = parts[3]
+    set label = parts[4]
+    set prog = p_prog(dir, i)
+    if eq(kind, "cache") {
+        set got = fetch_verified(url, checksum, label, prog)
+        file_write_text(p_state(dir, i), "ok\n" + got.path + "\t" + cast(got.bytes, "string"))
+    } else {
+        dir_create_all(path_parent(dest))
+        set size = download(url, dest, MAX_DOWNLOAD, prog)
+        check_blake3(dest, checksum)
+        file_write_text(p_state(dir, i), "ok\n" + dest + "\t" + cast(size, "string"))
+    }
+}
+
+// Точка входа потока. arg = номер задачи + 1 (0 был бы null).
+#[thunk]
+fun pool_worker(arg: ptr<void>) {
+    set i: int64 = cast(arg, "int64") - 1
+    set dir = get_or("YUKI_POOL_DIR", "")
+    sus {
+        run_job(dir, i)
+    } catch e: YukiError {
+        file_write_text(p_state(dir, i), "err\n" + cast(e.code, "string") + "\n" + e.message)
+    } catch e: VerifyError {
+        file_write_text(p_state(dir, i), "err\n" + cast(300 + e.code, "string") + "\n" + e.message)
+    } catch {
+        file_write_text(p_state(dir, i), "err\n755\nworker failed: " + errkind)
+    }
+}
+
+public fun jobs_limit() -> int64 {
+    set env: int64 = parse_int(get_or("YUKI_JOBS", "")) ?? 0
+    if env >= 1 && env <= 16 {
+        return env
+    }
+    set cores: int64 = cast(hardware_concurrency(), "int64")
+    if cores < 2 {
+        return 2
+    }
+    if cores > 4 {
+        return 4
+    }
+    return cores
+}
+
+fun read_received(dir: string, i: int64) -> int64 {
+    set f = p_prog(dir, i)
+    if !file_exists(f) {
+        return 0
+    }
+    set n: int64 = 0
+    sus {
+        set parts = split(file_read_text(f), " ")
+        rewrite n = parse_int(parts[0]) ?? 0
+    } catch {
+        rewrite n = 0
+    }
+    return n
+}
+
+fun read_total(dir: string, i: int64) -> int64 {
+    set f = p_prog(dir, i)
+    if !file_exists(f) {
+        return 0
+    }
+    set n: int64 = 0
+    sus {
+        set parts = split(file_read_text(f), " ")
+        if parts.len() > 1 {
+            rewrite n = parse_int(parts[1]) ?? 0
+        }
+    } catch {
+        rewrite n = 0
+    }
+    return n
+}
+
+// Обновить панель по файлам прогресса. nidx[i] — узел панели для задачи i (или -1).
+public fun pool_paint(dir: string, count: int64, ref nidx: int64[], t0: int64, ref ~view: InstallView) {
+    set sum: int64 = 0
+    for i in 0..count {
+        set got = read_received(dir, i)
+        rewrite sum += got
+        if nidx[i] >= 0 {
+            set total = read_total(dir, i)
+            if total > 0 {
+                view.set_pct(nidx[i], got * 100 / total)
+            }
+        }
+    }
+    set el = now_ms() - t0
+    if el > 0 && sum > 0 {
+        view.set_speed(format_speed(sum * 1000 / el))
+    }
+}
+
+// Запустить все задачи не более чем в `parallel` потоков и дождаться завершения.
+// Панель (если она живая) рисуется из этого потока; воркеры только скачивают.
+public fun pool_run(dir: string, count: int64, parallel: int64, ref nidx: int64[], ref ~view: InstallView) {
+    set_env("YUKI_POOL_DIR", dir)
+    set handles: uint64[] = []
+    set status: int32[] = []
+    for i in 0..count {
+        handles.push(0u64)
+        status.push(0)
+    }
+    set started: int64 = 0
+    set finished: int64 = 0
+    set running: int64 = 0
+    set t0 = now_ms()
+    loop {
+        while started < count && running < parallel {
+            handles[started] = spawn(cast(pool_worker, "ptr<void>"), cast(started + 1, "ptr<void>"))
+            rewrite status[started] = 1
+            if nidx[started] >= 0 {
+                view.set_state(nidx[started], 1)
+            }
+            rewrite started += 1
+            rewrite running += 1
+        }
+        for i in 0..started {
+            if status[i] == 1 && is_finished(handles[i]) {
+                join(handles[i])
+                rewrite status[i] = 2
+                rewrite running -= 1
+                rewrite finished += 1
+                if nidx[i] >= 0 {
+                    if pool_ok(dir, i) {
+                        view.set_state(nidx[i], 3)
+                    } else {
+                        view.set_state(nidx[i], 4)
+                    }
+                }
+            }
+        }
+        pool_paint(dir, count, ref nidx, t0, ref ~view)
+        view.draw(false)
+        if finished >= count {
+            break
+        }
+        sleep(40u64)
+    }
+}
+
+public fun pool_ok(dir: string, i: int64) -> bool {
+    set f = p_state(dir, i)
+    if !file_exists(f) {
+        return false
+    }
+    return eq(split(file_read_text(f), "\n")[0], "ok")
+}
+
+// Результат успешной задачи: вторая строка state-<i> ("<путь>\t<байты>").
+public fun pool_out(dir: string, i: int64) -> string {
+    set l = split(file_read_text(p_state(dir, i)), "\n")
+    if l.len() < 2 {
+        return ""
+    }
+    return split(l[1], "\t")[0]
+}
+
+public fun pool_bytes(dir: string, i: int64) -> int64 {
+    set l = split(file_read_text(p_state(dir, i)), "\n")
+    if l.len() < 2 {
+        return 0
+    }
+    set parts = split(l[1], "\t")
+    if parts.len() < 2 {
+        return 0
+    }
+    return parse_int(parts[1]) ?? 0
+}
+
+// Если хоть одна задача упала, поднять первую ошибку (после того как все закончили).
+public fun pool_raise(dir: string, count: int64, labels: string[]) {
+    for i in 0..count {
+        if !pool_ok(dir, i) {
+            set l = split(file_read_text(p_state(dir, i)), "\n")
+            set code: int32 = 755
+            set msg = "download failed"
+            if l.len() >= 3 {
+                rewrite code = cast(parse_int(l[1]) ?? 755, "int32")
+                rewrite msg = l[2]
+            }
+            panic(err(msg, code, labels[i]))
+        }
+    }
+}
