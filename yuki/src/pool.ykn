@@ -164,7 +164,7 @@ public fun pool_run(dir: string, count: int64, parallel: int64, ref nidx: int64[
     set t0 = now_ms()
     loop {
         while started < count && running < parallel {
-            handles[started] = spawn(cast(pool_worker, "ptr<void>"), cast(started + 1, "ptr<void>"))
+            rewrite handles[started] = spawn(cast(pool_worker, "ptr<void>"), cast(started + 1, "ptr<void>"))
             rewrite status[started] = 1
             if nidx[started] >= 0 {
                 view.set_state(nidx[started], 1)
