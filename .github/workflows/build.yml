@@ -1,7 +1,11 @@
 # ty4chka/yuki -> .github/workflows/build.yml
 # Две ступени: компилятор Yukino (yukitsuri/yukino, Rust + LLVM 22) -> сам yuki
-# (yukino build --release, флаг подтверждён в cli.rs:291; профиль из yuki.toml [config.release])
-# -> smoke: version + selftest (фатален, 799 при провале). Тег v* -> yuki-<версия>-<таргет>.tar.zst.
+# (yukino build release; профиль - ПОЗИЦИОННЫЙ аргумент, не флаг --release;
+# параметры профиля берутся из yuki.toml [config.release])
+# -> smoke: version + selftest (фатален). Тег v* -> yuki-<версия>-<таргет>.tar.zst.
+#
+# macOS убран из матрицы: macOS-таргет в Yukino пока в roadmap (aarch64-apple-darwin не реализован),
+# компилятор поддерживает только linux (glibc/musl), windows и android.
 name: build
 
 on:
@@ -19,7 +23,6 @@ jobs:
         include:
           - { os: ubuntu-24.04,     target: linux-x86_64 }
           - { os: ubuntu-24.04-arm, target: linux-aarch64 }
-          - { os: macos-14,         target: macos-arm64 }
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -28,7 +31,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
 
       - name: Install LLVM 22 (Linux)
-        if: runner.os == 'Linux'
         run: |
           wget -qO- https://apt.llvm.org/llvm.sh | sudo -E bash -s -- 22
           sudo apt-get install -y libpolly-22-dev lld-22
@@ -37,15 +39,6 @@ jobs:
           echo "LIBCLANG_PATH=/usr/lib/llvm-22/lib" >> "$GITHUB_ENV"
           echo "LD_LIBRARY_PATH=/usr/lib/llvm-22/lib" >> "$GITHUB_ENV"
           echo "/usr/lib/llvm-22/bin" >> "$GITHUB_PATH"
-
-      - name: Install LLVM 22 (macOS)
-        if: runner.os == 'macOS'
-        run: |
-          brew install llvm
-          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
-          echo "LLVM_CONFIG=$(brew --prefix llvm)/bin/llvm-config" >> "$GITHUB_ENV"
-          echo "LLVM_SYS_221_PREFIX=$(brew --prefix llvm)" >> "$GITHUB_ENV"
-          echo "LIBCLANG_PATH=$(brew --prefix llvm)/lib" >> "$GITHUB_ENV"
 
       - name: Stage 1 - Yukino compiler
         run: |
@@ -58,12 +51,15 @@ jobs:
         shell: bash
         run: |
           set -e
+          yukino --version || true
           # известный недетерминированный паник кодогена (sitofp) - ретраим
           ok=0
           for i in 1 2 3 4 5; do
-            if yukino build --release; then ok=1; break; fi
+            echo "::group::yukino build release (попытка $i)"
+            if yukino build release; then ok=1; echo "::endgroup::"; break; fi
+            echo "::endgroup::"
           done
-          [ "$ok" = "1" ] || { echo "yukino build --release failed after 5 tries"; exit 1; }
+          [ "$ok" = "1" ] || { echo "yukino build release failed after 5 tries"; exit 1; }
 
       - name: Smoke - version + selftest
         shell: bash
@@ -80,7 +76,7 @@ jobs:
         shell: bash
         run: |
           set -e
-          command -v zstd >/dev/null || { if [ "$RUNNER_OS" = "macOS" ]; then brew install zstd; else sudo apt-get install -y -qq zstd; fi; }
+          command -v zstd >/dev/null || sudo apt-get install -y -qq zstd
           BIN=$(find yuki-work -type f \( -name yuki -o -name yuki_debug \) | head -1)
           mkdir -p stage dist
           cp "$BIN" stage/yuki
