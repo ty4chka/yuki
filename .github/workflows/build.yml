@@ -74,6 +74,34 @@ jobs:
           done
           [ "$ok" = "1" ] || { echo "yukino build release failed"; exit 1; }
 
+      - name: Errors summary (только при падении)
+        if: failure()
+        shell: bash
+        run: |
+          cd "$PROJ_DIR" || exit 0
+          [ -f build.log ] || { echo "build.log нет"; exit 0; }
+          sed 's/\x1b\[[0-9;?]*[A-Za-z]//g; s/\r/\n/g' build.log > clean.log
+          {
+            echo '### Ошибки yukino build release'
+            echo '```'
+            grep -n -i -E 'error|ошибк' -A4 clean.log | head -150
+            echo '```'
+            echo '### Хвост лога'
+            echo '```'
+            tail -60 clean.log
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload build.log (при падении)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log-${{ matrix.target }}
+          path: |
+            ${{ env.PROJ_DIR }}/build.log
+            ${{ env.PROJ_DIR }}/clean.log
+          if-no-files-found: ignore
+
       - name: Smoke - version + selftest
         shell: bash
         run: |
