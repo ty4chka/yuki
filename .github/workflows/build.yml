@@ -110,4 +110,3 @@ jobs:
         with:
           files: dist/*.tar.zst
           generate_release_notes: true
-          
