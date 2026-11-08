@@ -206,8 +206,8 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
     set tcp = tcp_connect(t.host + ":443", 15000)
     tcp.set_timeouts(30000, 30000)
     set tls = tls_connect(ref tcp, t.host, false)
-    defer tcp.close()
-    defer tls.close()
+    defer { tcp.close() }
+    defer { tls.close() }
 
     tls.write("GET " + t.path + " HTTP/1.0\r\nHost: " + t.host + "\r\nUser-Agent: yuki/0.1\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n")
     tls.flush()
@@ -282,7 +282,7 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
     }
 
     set f = open_write(dest)
-    defer f.close()
+    defer { f.close() }
     loop {
         set piece = next_piece(ref ~tls, ref ~rd)
         if piece.len() == 0 {
