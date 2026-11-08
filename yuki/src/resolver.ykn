@@ -22,18 +22,18 @@ static MAX_NODES: int64 = 256
 
 fun visit(name: string, want: string, parent: int64, depth: int32, ref ~out: Node[], ref ~view: InstallView) {
     if depth > MAX_DEPTH {
-        rt::panic(err("dependency chain is too deep", 215, name))
+        panic(err("dependency chain is too deep", 215, name))
     }
     for i in 0..out.len() {
         if eq(out[i].name, name) {
             if want.len() > 0 && !eq(out[i].version, want) {
-                rt::panic(err("version conflict for " + name + ": " + out[i].version + " and " + want + " are both required", 217, name))
+                panic(err("version conflict for " + name + ": " + out[i].version + " and " + want + " are both required", 217, name))
             }
             return
         }
     }
     if out.len() >= MAX_NODES {
-        rt::panic(err("too many packages in the dependency tree", 216, name))
+        panic(err("too many packages in the dependency tree", 216, name))
     }
 
     set rel = resolve(name, want)

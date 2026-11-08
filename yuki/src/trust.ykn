@@ -143,23 +143,23 @@ public fun fingerprint(pubkey_hex: string) -> string {
 
 public fun trust_add(name: string, pubkey_hex: string, role: string, assume_yes: bool) {
     if !eq(role, "publisher") && !eq(role, "renewer") {
-        rt::panic(err("role must be publisher or renewer", 601, name))
+        panic(err("role must be publisher or renewer", 601, name))
     }
     if !valid_name(name) {
-        rt::panic(err("invalid key name: " + name, 601, name))
+        panic(err("invalid key name: " + name, 601, name))
     }
     if pubkey_hex.len() != 64 || !is_hex(pubkey_hex) {
-        rt::panic(err("public key must be 64 hex characters", 601, name))
+        panic(err("public key must be 64 hex characters", 601, name))
     }
     set key = lower(pubkey_hex)
     if is_revoked(key) {
-        rt::panic(err("this key was revoked and cannot be trusted again", 606, name))
+        panic(err("this key was revoked and cannot be trusted again", 606, name))
     }
     set names = trusted_names()
     set keys = trusted_keys()
     for i in 0..keys.len() {
         if eq(keys[i], key) || eq(names[i], name) {
-            rt::panic(err("this key or name is already trusted", 605, name))
+            panic(err("this key or name is already trusted", 605, name))
         }
     }
     println("  fingerprint  " + fingerprint(key))
@@ -169,7 +169,7 @@ public fun trust_add(name: string, pubkey_hex: string, role: string, assume_yes:
         print("  trust this key for signing index entries? [y/N] ")
         set answer = lower(trim(read_line()))
         if !eq(answer, "y") && !eq(answer, "yes") {
-            rt::panic(err("aborted: key was not trusted", 603, name))
+            panic(err("aborted: key was not trusted", 603, name))
         }
     }
     ensure_dirs()
@@ -199,7 +199,7 @@ public fun trust_remove(name: string) -> bool {
 // Новый ключ подписи. Возвращает публичный ключ (hex).
 public fun keygen(name: string) -> string {
     if !valid_name(name) {
-        rt::panic(err("invalid key name: " + name, 601, name))
+        panic(err("invalid key name: " + name, 601, name))
     }
     ensure_dirs()
     set kd = keys_dir()
@@ -207,7 +207,7 @@ public fun keygen(name: string) -> string {
     file_set_permissions(kd, 448)
     set path = path_join(kd, name + ".seed")
     if file_exists(path) {
-        rt::panic(err("key already exists", 602, path))
+        panic(err("key already exists", 602, path))
     }
     set seed: bytes = random_bytes(32)
     set pubk: bytes = ed25519_public_key(ref seed)
@@ -219,7 +219,7 @@ public fun keygen(name: string) -> string {
 fun read_seed(name: string) -> bytes {
     set path = path_join(keys_dir(), name + ".seed")
     if !valid_name(name) || !file_exists(path) {
-        rt::panic(err("no such signing key: " + name, 604, path))
+        panic(err("no such signing key: " + name, 604, path))
     }
     return hex_to_bytes(trim(file_read_text(path)))
 }
