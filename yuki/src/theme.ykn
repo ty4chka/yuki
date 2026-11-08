@@ -19,13 +19,13 @@
 load std.io: is_stdout_terminal
 load std.env: get_or, set_env, has_env
 load std.outf: Styled, style, supports_truecolor
-load std.strings: split, eq, lower, contains, starts_with, slice, parse_int, index_of, str_join
+load std.strings: split, eq, lower, contains, slice, parse_int, str_join
 load std.toml: parse, validate
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all
 load std.fs.paths: path_join
 load .config: config_dir
-load .util: is_hex
+load .util: is_hex, starts_with, index_of
 
 public fun theme_path() -> string {
     set p = get_or("YUKI_THEME_FILE", "")

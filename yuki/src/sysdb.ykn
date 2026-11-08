@@ -7,7 +7,8 @@
 load std.fs.files: file_exists, file_read_text, file_write_text, file_append_text
 load std.fs.dirs: dir_create_all, dir_exists, dir_list, dir_remove_all
 load std.fs.paths: path_join, path_file_name
-load std.strings: lines, split, trim, eq, slice, index_of, str_join, parse_int
+load std.strings: lines, split, trim, eq, slice, str_join, parse_int
+load .util: index_of
 load .errors: YukiError, err
 load .config: state_dir, config_dir
 

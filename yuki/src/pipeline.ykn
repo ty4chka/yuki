@@ -6,7 +6,8 @@ load std.fs.files: file_exists, file_remove, file_rename, file_size
 load std.fs.paths: path_join
 load std.hash.blake3: blake3_file
 load std.stdotool.format: format_bytes
-load std.strings: ends_with, slice, lower
+load std.strings: slice, lower
+load .util: ends_with
 load .errors: YukiError, err
 load .config: cache_dir, ensure_dirs, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, MAX_DOWNLOAD
 load .fetch: download, check_url

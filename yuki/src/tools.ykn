@@ -13,7 +13,7 @@ load std.hash.blake3: blake3_file
 load std.outf: supports_truecolor
 load std.process: run
 load std.stdotool.format: format_bytes
-load std.strings: eq, lower, trim, lines, split, str_join, contains, starts_with, slice, index_of, pad_end, parse_int
+load std.strings: eq, lower, trim, lines, split, str_join, contains, slice, pad_end, parse_int
 load .errors: YukiError, err
 load .config: config_dir, state_dir, cache_dir, index_url, host_target, system_mode, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .ui: ok, info, warn, bad, kv, c_accent, c_good, c_warn, c_bad, c_dim, c_bold
@@ -32,7 +32,7 @@ load .index: seen_get, seen_set
 load .fetch: http_text
 load .explain: explain_lines
 load .cmdlist: help_lines, suggest, completion_script
-load .util: now_secs, valid_name, valid_version, ver_cmp
+load .util: now_secs, valid_name, valid_version, ver_cmp, starts_with, index_of
 
 fun yn(b: bool) -> string {
     if b {

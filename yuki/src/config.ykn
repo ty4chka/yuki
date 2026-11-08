@@ -6,7 +6,8 @@ load std.fs.files: file_exists, file_read_text
 load std.fs.paths: path_join
 load std.env: get_env, get_or
 load std.sysinfo: os_name, cpu_arch
-load std.strings: trim, lines, eq, lower, ends_with, slice, contains, split, str_join
+load std.strings: trim, lines, eq, lower, slice, contains, split, str_join
+load .util: ends_with
 load .errors: YukiError, err
 
 public static MAX_ENTRIES: int64 = 20000

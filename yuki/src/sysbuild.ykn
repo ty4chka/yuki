@@ -15,7 +15,8 @@ load std.fs.paths: path_join, path_parent, path_file_name
 load std.fs.archives.tar: tar_unpack, tar_pack_dir
 load std.os.unix: chmod
 load std.env: get_or
-load std.strings: lines, split, eq, trim, starts_with, slice, str_join
+load std.strings: lines, split, eq, trim, slice, str_join
+load .util: starts_with
 load .errors: YukiError, err
 load .config: config_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .verify: VerifyError, check_blake3, audit_tar

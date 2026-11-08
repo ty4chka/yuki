@@ -9,12 +9,12 @@ load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all
 load std.fs.paths: path_join, path_parent
 load std.env: get_or
-load std.strings: eq, trim, lines, index_of, slice
+load std.strings: eq, trim, lines, slice
 load .errors: YukiError, err
 load .config: MAX_INDEX_FILE
 load .index: Release, EntryText, fetch_entry, resolve_text, index_get
 load .sysdb: db_has, db_read
-load .util: dep_name, dep_version
+load .util: dep_name, dep_version, index_of
 
 public struct PNode {
     rel: Release

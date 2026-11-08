@@ -1,7 +1,8 @@
 // policy.ykn — что пакет вообще может положить в систему.
 // Правила применяются к уже проверенному архиву, на стороне root.
 
-load std.strings: starts_with, contains, eq, ends_with
+load std.strings: contains, eq
+load .util: starts_with, ends_with
 load .verify: is_safe_rel_path
 
 fun starts_any(p: string, prefixes: string[]) -> bool {

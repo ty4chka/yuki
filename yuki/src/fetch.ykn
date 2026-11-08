@@ -7,12 +7,12 @@
 // Прогресс пишется в маленький файл prog_path: его читает рисующий поток/процесс.
 
 load std.net: tcp_connect, tls_connect, TlsStream
-load std.strings: split, trim, lower, index_of, slice, starts_with, contains, eq, parse_int
+load std.strings: split, trim, lower, slice, contains, eq, parse_int
 load std.fs.files: File, open_write, file_remove, file_write_text
 load std.stdotool.format: format_speed
 load .errors: YukiError, err
 load .config: host_allowed
-load .util: now_ms
+load .util: now_ms, starts_with, index_of
 
 public struct Response {
     status: int32
@@ -102,7 +102,7 @@ fun parse_hex(s: string) -> int64 {
         return -1
     }
     for i in 0..s.len() {
-        set v = hexval(slice(s, i, i + 1))
+        set v: int64 = hexval(slice(s, i, i + 1))
         if v < 0 {
             return -1
         }
@@ -206,8 +206,8 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
     set tcp = tcp_connect(t.host + ":443", 15000)
     tcp.set_timeouts(30000, 30000)
     set tls = tls_connect(ref tcp, t.host, false)
-    defer { tcp.close() }
-    defer { tls.close() }
+    defer tcp.close()
+    defer tls.close()
 
     tls.write("GET " + t.path + " HTTP/1.0\r\nHost: " + t.host + "\r\nUser-Agent: yuki/0.1\r\nAccept: */*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n")
     tls.flush()
@@ -282,7 +282,7 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
     }
 
     set f = open_write(dest)
-    defer { f.close() }
+    defer f.close()
     loop {
         set piece = next_piece(ref ~tls, ref ~rd)
         if piece.len() == 0 {

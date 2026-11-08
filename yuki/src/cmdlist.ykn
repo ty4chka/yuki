@@ -1,7 +1,7 @@
 // cmdlist.ykn — список команд: подсказка «did you mean», дополнение в оболочке, справка.
 
-load std.strings: eq, starts_with, str_join
-load .util: edit_distance
+load std.strings: eq, str_join
+load .util: edit_distance, starts_with
 
 public fun all_commands() -> string[] {
     return ["install", "reinstall", "uninstall", "upgrade", "self-update", "list", "info", "files", "owns", "why", "tree", "check", "sys-audit", "outdated", "hold", "unhold", "history", "rollback", "export", "import", "search", "show", "add", "remove", "fetch", "update", "audit", "keys", "theme", "pack", "publish", "yank", "renew", "index", "verify", "verify-sig", "inspect", "doctor", "config", "clean", "explain", "selftest", "completions", "help", "version"]

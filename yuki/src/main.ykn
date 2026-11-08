@@ -1,7 +1,8 @@
 // main.ykn — точка входа yuki: флаги в стиле pacman, диспетчер команд, единая обработка ошибок.
 
 load std.io: println
-load std.strings: eq, starts_with, slice, str_join, parse_int
+load std.strings: eq, slice, str_join, parse_int
+load .util: starts_with
 load std.env: get_or, set_env
 load std.fs.archives.tar: TarError
 load .ui: banner, diag_error, warn, c_dim, c_accent
