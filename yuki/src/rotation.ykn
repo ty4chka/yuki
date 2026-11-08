@@ -58,7 +58,7 @@ public fun cmd_keys_refresh() {
         }
         set need = threshold()
         if counted.len() < need {
-            panic(err("rotation is signed by " + rt::cast(counted.len(), "string") + " trusted key(s), " + rt::cast(need, "string") + " required", 760, "rotation.json"))
+            panic(err("rotation is signed by " + cast(counted.len(), "string") + " trusted key(s), " + cast(need, "string") + " required", 760, "rotation.json"))
         }
 
         set doc = json_parse(text)

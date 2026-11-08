@@ -102,7 +102,7 @@ public fun seen_set(name: string, seq: int64) {
             set p = split(trim(ls[i]), " ")
             if p.len() == 2 {
                 if eq(p[0], name) {
-                    out.push(name + " " + rt::cast(seq, "string"))
+                    out.push(name + " " + cast(seq, "string"))
                     rewrite found = true
                 } else {
                     out.push(trim(ls[i]))
@@ -111,7 +111,7 @@ public fun seen_set(name: string, seq: int64) {
         }
     }
     if !found {
-        out.push(name + " " + rt::cast(seq, "string"))
+        out.push(name + " " + cast(seq, "string"))
     }
     file_write_text(f, str_join(out, "\n") + "\n")
 }
@@ -254,7 +254,7 @@ fun verify_content(doc: JsonValue, ref keys: string[], ref roles: string[], ref 
     set need = publish_threshold()
     if pubs.len() < need {
         panic(VerifyError {
-            message: "needs " + rt::cast(need, "string") + " publisher signature(s) on the releases, found " + rt::cast(pubs.len(), "string") + " (a renewer key cannot approve content)",
+            message: "needs " + cast(need, "string") + " publisher signature(s) on the releases, found " + cast(pubs.len(), "string") + " (a renewer key cannot approve content)",
             code: 3,
             path: rel_path,
         })

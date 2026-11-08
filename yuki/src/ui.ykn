@@ -66,7 +66,7 @@ public fun bad(msg: string) {
 }
 
 public fun step(n: int64, total: int64, msg: string) {
-    println(c_dim("[" + rt::cast(n, "string") + "/" + rt::cast(total, "string") + "]") + " " + msg)
+    println(c_dim("[" + cast(n, "string") + "/" + cast(total, "string") + "]") + " " + msg)
 }
 
 public fun kv(key: string, value: string) {
@@ -77,7 +77,7 @@ public fun kv(key: string, value: string) {
 public fun fmt_secs(ms: int64) -> string {
     set whole = ms / 1000
     set tenth = (ms % 1000) / 100
-    return rt::cast(whole, "string") + "." + rt::cast(tenth, "string") + "s"
+    return cast(whole, "string") + "." + cast(tenth, "string") + "s"
 }
 
 public fun done(took_ms: int64, hint: string) {

@@ -30,7 +30,7 @@ load .util: now_ms
 public fun stage_create() -> string {
     if !is_root() {
         // запросы без root (search, show, outdated): рабочий каталог в temp, привилегий нет
-        set own = path_join(path_join(dir_temp(), "yuki-" + rt::cast(now_ms(), "string")), "stage")
+        set own = path_join(path_join(dir_temp(), "yuki-" + cast(now_ms(), "string")), "stage")
         dir_create_all(path_join(own, "dl"))
         dir_create_all(path_join(own, "art"))
         dir_create_all(path_join(own, "root"))
@@ -42,7 +42,7 @@ public fun stage_create() -> string {
     set m700: uint32 = 448
     set nb: uint32 = 65534
     chmod(base, m711)
-    set stage = path_join(base, rt::cast(now_ms(), "string"))
+    set stage = path_join(base, cast(now_ms(), "string"))
     dir_create_all(stage)
     chmod(stage, m711)
     set dl = path_join(stage, "dl")
@@ -100,7 +100,7 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
         } catch {
             file_write_text(path_join(dl, "ERROR"), "unexpected failure: " + errkind)
         }
-        rt::exit(0)
+        exit(0)
     }
 
     // родитель не блокируется: рисует панель по файлам прогресса ребёнка

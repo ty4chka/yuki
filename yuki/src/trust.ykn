@@ -232,7 +232,7 @@ public fun pubkey_of(name: string) -> string {
 
 public fun sign_text(name: string, text: string) -> string {
     set seed: bytes = read_seed(name)
-    set msg: bytes = rt::cast(signed_message(text), "bytes")
+    set msg: bytes = cast(signed_message(text), "bytes")
     set sig: bytes = ed25519_sign(ref seed, ref msg)
     return bytes_to_hex(ref sig)
 }
