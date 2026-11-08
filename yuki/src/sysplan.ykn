@@ -25,8 +25,8 @@ public struct PNode {
 
 // action: "bin" готовая сборка, "src" сборка из исходников, "installed" уже стоит, "none" нечего ставить
 
-static MAX_DEPTH: int32 = 16
-static MAX_NODES: int64 = 128
+static PLAN_MAX_DEPTH: int32 = 16
+static PLAN_MAX_NODES: int64 = 128
 
 public fun spec_name(spec: string) -> string {
     set at = index_of(spec, "@")
@@ -79,7 +79,7 @@ fun load_entry(dl: string, name: string, fetch_missing: bool) -> EntryText {
 }
 
 fun plan_visit(dl: string, name: string, want: string, parent: int64, depth: int32, fetch_missing: bool, record: bool, ref ~out: PNode[]) {
-    if depth > MAX_DEPTH {
+    if depth > PLAN_MAX_DEPTH {
         panic(err("dependency chain is too deep", 215, name))
     }
     for i in 0..out.len() {
@@ -90,7 +90,7 @@ fun plan_visit(dl: string, name: string, want: string, parent: int64, depth: int
             return
         }
     }
-    if out.len() >= MAX_NODES {
+    if out.len() >= PLAN_MAX_NODES {
         panic(err("too many packages in the dependency tree", 216, name))
     }
 

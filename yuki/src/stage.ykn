@@ -62,7 +62,7 @@ public fun stage_remove(stage: string) {
 
 // Корни установки: пишет родитель (root), читает ребёнок.
 public fun write_roots(stage: string, ref roots: string[]) {
-    file_write_text(join2(stage, "roots"), str_join(roots, "\n") + "\n")
+    file_write_text(join2(stage, "roots"), str_join(roots.cp(), "\n") + "\n")
 }
 
 // Текст от ребёнка недоверенный: без управляющих последовательностей, одной строкой, обрезанный.

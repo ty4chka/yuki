@@ -352,7 +352,7 @@ public fun cmd_index_catalog(keyname: string) {
     set root = json_object()
     root.set("seq", json_int(seq))
     root.set("expires", json_int(now_secs() + ENTRY_LIFETIME))
-    root.set("packages", pk)
+    root.set("packages", pk.cp())
     set text = json_pretty(root) + "\n"
     file_write_text("catalog.json", text)
     file_write_text("catalog.json.sig", sign_text(keyname, text) + "\n")
@@ -427,7 +427,7 @@ public fun cmd_index_cosign(name: string, keyname: string) {
     root.set("seq", json_int(old.get("seq").as_int()))
     root.set("expires", json_int(old.get("expires").as_int()))
     root.set("versions", old.get("versions").cp())
-    root.set("content_sigs", csigs)
+    root.set("content_sigs", csigs.cp())
     set text = json_pretty(root) + "\n"
     file_write_text(rel, text)
     file_write_text(rel + ".sig", myp + " " + sign_text(keyname, text) + "\n")

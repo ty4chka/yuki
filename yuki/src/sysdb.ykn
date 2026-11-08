@@ -94,7 +94,7 @@ public fun db_write(rec: PkgRecord, ref files: string[]) {
         "summary=" + rec.summary
     ]
     file_write_text(join2(db_dir(rec.name), "desc"), str_join(d, "\n") + "\n")
-    file_write_text(join2(db_dir(rec.name), "files"), str_join(files, "\n") + "\n")
+    file_write_text(join2(db_dir(rec.name), "files"), str_join(files.cp(), "\n") + "\n")
 }
 
 public fun db_files(name: string) -> string[] {

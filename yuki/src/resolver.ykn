@@ -18,11 +18,11 @@ public struct Node {
     parent: int64
 }
 
-static MAX_DEPTH: int32 = 16
-static MAX_NODES: int64 = 256
+static RES_MAX_DEPTH: int32 = 16
+static RES_MAX_NODES: int64 = 256
 
 fun resolve_visit(name: string, want: string, parent: int64, depth: int32, ref ~out: Node[], ref ~view: InstallView) {
-    if depth > MAX_DEPTH {
+    if depth > RES_MAX_DEPTH {
         panic(err("dependency chain is too deep", 215, name))
     }
     for i in 0..out.len() {
@@ -33,7 +33,7 @@ fun resolve_visit(name: string, want: string, parent: int64, depth: int32, ref ~
             return
         }
     }
-    if out.len() >= MAX_NODES {
+    if out.len() >= RES_MAX_NODES {
         panic(err("too many packages in the dependency tree", 216, name))
     }
 

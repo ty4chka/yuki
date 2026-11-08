@@ -289,7 +289,7 @@ public fun resolve_text(name: string, want: string, text: string, sig: string, r
     set pubs = sg.pubs
 
     set doc = json_parse(text)
-    verify_content(doc, ref keys, ref roles, ref ~pubs, rel_path)
+    verify_content(doc.cp(), ref keys, ref roles, ref ~pubs, rel_path)
     if !eq(doc.get("name").as_string(), name) {
         panic(err("index entry belongs to a different package", 203, rel_path))
     }

@@ -367,7 +367,7 @@ public fun cmd_why(name: string) {
     set r = db_read(name)
     set users = dependents_of(name)
     if users.len() > 0 {
-        ok(name + " is needed by " + c_accent(str_join(users, ", ")))
+        ok(name + " is needed by " + c_accent(str_join(users.cp(), ", ")))
     }
     if !eq(r.reason, "dep") {
         ok(name + " was installed explicitly")
