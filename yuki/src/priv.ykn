@@ -32,16 +32,16 @@ public fun drop_privileges(uid: c_uint, gid: c_uint) {
     set dummy: c_uint = 0
     set zero: c_uint = 0
     if setgroups(none, ptr_of(dummy)) != 0 {
-        rt::panic(err("could not clear supplementary groups", 701, ""))
+        panic(err("could not clear supplementary groups", 701, ""))
     }
     if setgid(gid) != 0 {
-        rt::panic(err("could not drop the group", 701, ""))
+        panic(err("could not drop the group", 701, ""))
     }
     if setuid(uid) != 0 {
-        rt::panic(err("could not drop root", 701, ""))
+        panic(err("could not drop root", 701, ""))
     }
     if setuid(zero) == 0 {
-        rt::panic(err("privileges could be regained, refusing to continue", 702, ""))
+        panic(err("privileges could be regained, refusing to continue", 702, ""))
     }
     set a1: c_size_t = 1
     set a0: c_size_t = 0
@@ -57,7 +57,7 @@ public fun kill_all_as(uid: c_uint) {
     }
     set pid = fork()
     if pid < 0 {
-        rt::panic(err("fork failed", 703, ""))
+        panic(err("fork failed", 703, ""))
     }
     if pid == 0 {
         sus {

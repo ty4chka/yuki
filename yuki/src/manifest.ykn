@@ -4,7 +4,8 @@
 // yukino сам скачает и сверит checksum; хвост "# yuki:<версия>" читает только yuki.
 
 load std.fs.files: file_exists, file_read_text, file_write_text, file_rename
-load std.strings: lines, trim, starts_with, index_of, index_of_from, slice, eq, str_join, split
+load std.strings: lines, trim, index_of_from, slice, eq, str_join, split
+load .util: starts_with, index_of
 load .errors: YukiError, err
 
 static MANIFEST: string = "yuki.toml"

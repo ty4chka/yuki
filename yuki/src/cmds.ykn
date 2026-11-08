@@ -48,7 +48,7 @@ public fun cmd_inspect(archive: string) {
     step(1, 1, "inspecting " + c_accent(archive))
     set rep = audit_tar(archive, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, false)
     ok("archive is safe to unpack")
-    kv("entries", cast(rep.entries, "string"))
+    kv("entries", rt::cast(rep.entries, "string"))
     kv("unpacked", format_bytes(rep.total_bytes))
 }
 
@@ -57,7 +57,7 @@ public fun cmd_inspect(archive: string) {
 // Скачать и проверить все архивы параллельно. nidx[i] — узел панели для i-й задачи.
 // Возвращает суммарный размер.
 fun fetch_many(ref urls: string[], ref sums: string[], ref labels: string[], ref nidx: int64[], ref ~view: InstallView) -> int64 {
-    set dir = path_join(cache_dir(), "pool-" + cast(now_ms(), "string"))
+    set dir = path_join(cache_dir(), "pool-" + rt::cast(now_ms(), "string"))
     pool_prepare(dir)
     for i in 0..urls.len() {
         pool_add(dir, i, "cache", urls[i], sums[i], "", labels[i])
@@ -83,7 +83,7 @@ fun install_tree(name: string, want: string, verb: string) {
     set t0 = now_ms()
     set view = init InstallView(verb + " " + c_accent(name), animation_on())
     set nodes = resolve_tree(name, want, ref ~view)
-    view.set_phase(1, cast(nodes.len(), "string") + " packages " + c_dim(sym("dot") + " signed by " + nodes[0].signer))
+    view.set_phase(1, rt::cast(nodes.len(), "string") + " packages " + c_dim(sym("dot") + " signed by " + nodes[0].signer))
 
     set urls: string[] = []
     set sums: string[] = []
@@ -96,7 +96,7 @@ fun install_tree(name: string, want: string, verb: string) {
         nidx.push(i)
     }
     set total_bytes = fetch_many(ref urls, ref sums, ref labels, ref nidx, ref ~view)
-    view.set_phase(2, "verified " + c_dim(format_bytes(total_bytes) + ", blake3 + audit, " + cast(jobs_limit(), "string") + " in parallel"))
+    view.set_phase(2, "verified " + c_dim(format_bytes(total_bytes) + ", blake3 + audit, " + rt::cast(jobs_limit(), "string") + " in parallel"))
 
     // у корня сначала снимаем прежнее поддерево (то, что нужно только ему), затем записываем новое
     prune_owner(nodes[0].name)
@@ -114,7 +114,7 @@ fun install_tree(name: string, want: string, verb: string) {
 
     println("")
     set rows: string[] = []
-    rows.push(c_good("+") + " " + c_bold(nodes[0].name) + " " + c_good(nodes[0].version) + c_dim("  +" + cast(nodes.len() - 1, "string") + " deps"))
+    rows.push(c_good("+") + " " + c_bold(nodes[0].name) + " " + c_good(nodes[0].version) + c_dim("  +" + rt::cast(nodes.len() - 1, "string") + " deps"))
     rows.push(c_dim(nodes[0].checksum))
     rows.push(c_dim("signed by ") + c_accent(nodes[0].signer))
     card(ref rows)
@@ -140,7 +140,7 @@ public fun cmd_remove(name: string) {
         ok("removed " + name + " from [libs.runtime]")
         set gone = prune_owner(name)
         if gone > 0 {
-            ok("also removed " + cast(gone, "string") + " dependenc" + "ies that nothing else needs")
+            ok("also removed " + rt::cast(gone, "string") + " dependenc" + "ies that nothing else needs")
         }
     } else {
         warn(name + " is not managed by yuki in this project")
@@ -173,7 +173,7 @@ public fun cmd_install() {
         labels.push(deps[i].name)
         nidx.push(i)
     }
-    view.set_phase(1, cast(deps.len(), "string") + " packages " + c_dim(sym("dot") + " from yuki.toml"))
+    view.set_phase(1, rt::cast(deps.len(), "string") + " packages " + c_dim(sym("dot") + " from yuki.toml"))
     set total_bytes = fetch_many(ref urls, ref sums, ref labels, ref nidx, ref ~view)
     view.set_phase(2, "verified " + c_dim(format_bytes(total_bytes) + ", blake3 + audit"))
     view.set_phase(3, "yuki.toml is up to date")
@@ -215,7 +215,7 @@ public fun cmd_update(only: string) {
             warn(dn + ": the index only offers " + rel.version + ", older than " + deps[i].version)
         }
     }
-    info(cast(changed, "string") + " updated")
+    info(rt::cast(changed, "string") + " updated")
 }
 
 // Сверка manifest с подписанным индексом: смена хеша, снятые (yanked) релизы.
@@ -249,9 +249,9 @@ public fun cmd_audit() {
         }
     }
     if problems > 0 {
-        panic(err(cast(problems, "string") + " problem(s) found, see above", 213, "yuki.toml"))
+        panic(err(rt::cast(problems, "string") + " problem(s) found, see above", 213, "yuki.toml"))
     }
-    ok("all " + cast(deps.len(), "string") + " dependencies match the index")
+    ok("all " + rt::cast(deps.len(), "string") + " dependencies match the index")
 }
 
 // ── мейнтейнер индекса: publish / yank / renew ──────────────────────────

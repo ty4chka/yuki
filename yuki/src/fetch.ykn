@@ -195,7 +195,7 @@ fun write_progress(prog_path: string, received: int64, total: int64, last: int64
         return last
     }
     sus {
-        file_write_text(prog_path, cast(received, "string") + " " + cast(total, "string"))
+        file_write_text(prog_path, rt::cast(received, "string") + " " + rt::cast(total, "string"))
     } catch {
     }
     return now
@@ -241,7 +241,7 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
     if sl.len() < 2 {
         panic(err("malformed HTTP status line", 406, url))
     }
-    set status: int32 = cast(parse_int(sl[1]) ?? 0, "int32")
+    set status: int32 = rt::cast(parse_int(sl[1]) ?? 0, "int32")
     set location = header_value(ref hl, "location")
     if status != 200 {
         return Response { status: status, location: location, body: "", received: 0 }
@@ -300,7 +300,7 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
     }
     if prog_path.len() > 0 {
         sus {
-            file_write_text(prog_path, cast(received, "string") + " " + cast(received, "string"))
+            file_write_text(prog_path, rt::cast(received, "string") + " " + rt::cast(received, "string"))
         } catch {
         }
     }
@@ -341,7 +341,7 @@ fun get_follow(url: string, dest: string, max_bytes: int64, prog_path: string) -
 public fun http_text(url: string, max_bytes: int64) -> string {
     set r = get_follow(url, "", max_bytes, "")
     if r.status != 200 {
-        panic(err("HTTP " + cast(r.status, "string") + " for " + url, 404, url))
+        panic(err("HTTP " + rt::cast(r.status, "string") + " for " + url, 404, url))
     }
     return r.body
 }
@@ -351,7 +351,7 @@ public fun download(url: string, dest: string, max_bytes: int64, prog_path: stri
     set r = get_follow(url, dest, max_bytes, prog_path)
     if r.status != 200 {
         file_remove(dest)
-        panic(err("HTTP " + cast(r.status, "string") + " for " + url, 404, url))
+        panic(err("HTTP " + rt::cast(r.status, "string") + " for " + url, 404, url))
     }
     return r.received
 }

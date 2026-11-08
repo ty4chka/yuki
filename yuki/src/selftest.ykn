@@ -111,7 +111,7 @@ public fun cmd_selftest() {
 
     println("")
     if failed > 0 {
-        rt::panic(err(rt::cast(failed, "string") + " self-test check(s) failed", 799, "selftest"))
+        panic(err(rt::cast(failed, "string") + " self-test check(s) failed", 799, "selftest"))
     }
     ok("all checks passed " + c_dim("(this build can hash, sign, verify and run threads)"))
 }

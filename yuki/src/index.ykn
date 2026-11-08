@@ -149,13 +149,13 @@ public fun index_get(rel: string, max_bytes: int64) -> string {
             return got
         }
     }
-    rt::panic(err("all index mirrors failed: " + why, 404, rel))
+    panic(err("all index mirrors failed: " + why, 404, rel))
 }
 
 // Скачать запись и подпись (только сеть, без проверок).
 public fun fetch_entry(name: string) -> EntryText {
     if !valid_name(name) {
-        rt::panic(err("invalid package name: " + name, 201, name))
+        panic(err("invalid package name: " + name, 201, name))
     }
     set rel_path = entry_rel(name)
     set text = index_get(rel_path, MAX_INDEX_FILE)
@@ -229,7 +229,7 @@ fun verify_wrapper(text: string, sigtext: string, ref keys: string[], ref roles:
         }
     }
     if who < 0 {
-        rt::panic(VerifyError {
+        panic(VerifyError {
             message: "index entry is not signed by any trusted key",
             code: 3,
             path: rel_path,
@@ -253,7 +253,7 @@ fun verify_content(doc: JsonValue, ref keys: string[], ref roles: string[], ref 
     }
     set need = publish_threshold()
     if pubs.len() < need {
-        rt::panic(VerifyError {
+        panic(VerifyError {
             message: "needs " + rt::cast(need, "string") + " publisher signature(s) on the releases, found " + rt::cast(pubs.len(), "string") + " (a renewer key cannot approve content)",
             code: 3,
             path: rel_path,
@@ -274,12 +274,12 @@ fun safe_token(s: string) -> bool {
 // record == true запоминает seq (защита от отката); непривилегированной фазе нельзя.
 public fun resolve_text(name: string, want: string, text: string, sig: string, record: bool) -> Release {
     if !valid_name(name) {
-        rt::panic(err("invalid package name: " + name, 201, name))
+        panic(err("invalid package name: " + name, 201, name))
     }
     set rel_path = entry_rel(name)
     set keys = trusted_keys()
     if keys.len() == 0 {
-        rt::panic(err("no trusted keys yet: add one with `yuki keys trust <name> <pubkey>`", 202, rel_path))
+        panic(err("no trusted keys yet: add one with `yuki keys trust <name> <pubkey>`", 202, rel_path))
     }
 
     set roles = trusted_roles()
@@ -290,19 +290,19 @@ public fun resolve_text(name: string, want: string, text: string, sig: string, r
     set doc = json_parse(text)
     verify_content(doc, ref keys, ref roles, ref ~pubs, rel_path)
     if !eq(doc.get("name").as_string(), name) {
-        rt::panic(err("index entry belongs to a different package", 203, rel_path))
+        panic(err("index entry belongs to a different package", 203, rel_path))
     }
     set seq = doc.get("seq").as_int()
     set expires = doc.get("expires").as_int()
     if expires < now_secs() {
-        rt::panic(err("index entry has expired (stale or frozen index)", 204, rel_path))
+        panic(err("index entry has expired (stale or frozen index)", 204, rel_path))
     }
     if seq < seen_get(name) {
-        rt::panic(err("index entry is older than one already seen (rollback attack?)", 205, rel_path))
+        panic(err("index entry is older than one already seen (rollback attack?)", 205, rel_path))
     }
     set kind = doc.get("kind").as_string_or("lib")
     if !eq(kind, "lib") && !eq(kind, "app") {
-        rt::panic(err("unknown package kind: " + kind, 218, rel_path))
+        panic(err("unknown package kind: " + kind, 218, rel_path))
     }
 
     set versions = doc.get("versions")
@@ -326,17 +326,17 @@ public fun resolve_text(name: string, want: string, text: string, sig: string, r
         }
     }
     if best < 0 {
-        rt::panic(err("no matching release (missing or yanked): " + name + " " + want, 206, rel_path))
+        panic(err("no matching release (missing or yanked): " + name + " " + want, 206, rel_path))
     }
 
     set url = versions.at(best).get("url").as_string_or("")
     set checksum = versions.at(best).get("checksum").as_string_or("")
     if kind == "lib" {
         if !entry_url_ok(url) {
-            rt::panic(err("release URL is not allowed: " + url, 208, rel_path))
+            panic(err("release URL is not allowed: " + url, 208, rel_path))
         }
         if !checksum_ok_format(checksum) {
-            rt::panic(err("release has a malformed checksum", 209, rel_path))
+            panic(err("release has a malformed checksum", 209, rel_path))
         }
     }
 
@@ -344,7 +344,7 @@ public fun resolve_text(name: string, want: string, text: string, sig: string, r
     set bin_url = versions.at(best).get("bin").get(host_target()).get("url").as_string_or("")
     set bin_sum = versions.at(best).get("bin").get(host_target()).get("checksum").as_string_or("")
     if bin_url.len() > 0 && (!entry_url_ok(bin_url) || !checksum_ok_format(bin_sum)) {
-        rt::panic(err("binary release has a bad URL or checksum", 219, rel_path))
+        panic(err("binary release has a bad URL or checksum", 219, rel_path))
     }
 
     // исходники: архив, команда сборки и явный список файлов, которые попадут в пакет
@@ -356,36 +356,36 @@ public fun resolve_text(name: string, want: string, text: string, sig: string, r
     set files: string[] = []
     if src_url.len() > 0 {
         if !entry_url_ok(src_url) || !checksum_ok_format(src_sum) {
-            rt::panic(err("source release has a bad URL or checksum", 219, rel_path))
+            panic(err("source release has a bad URL or checksum", 219, rel_path))
         }
         set bl = src.get("build")
         if bl.len() == 0 || bl.len() > 16 {
-            rt::panic(err("source release needs 1-16 build arguments", 220, rel_path))
+            panic(err("source release needs 1-16 build arguments", 220, rel_path))
         }
         for k in 0..bl.len() {
             set a = bl.at(k).as_string()
             if !safe_token(a) {
-                rt::panic(err("malformed build argument", 220, rel_path))
+                panic(err("malformed build argument", 220, rel_path))
             }
             build.push(a)
         }
         set fl = src.get("files")
         if fl.len() == 0 || fl.len() > 256 {
-            rt::panic(err("source release needs 1-256 packaged files", 221, rel_path))
+            panic(err("source release needs 1-256 packaged files", 221, rel_path))
         }
         for k in 0..fl.len() {
             set from = fl.at(k).get("from").as_string_or("")
             set to = fl.at(k).get("to").as_string_or("")
             set mode = fl.at(k).get("mode").as_string_or("644")
             if !is_safe_rel_path(from) || !is_safe_rel_path(to) || contains(from, "|") || contains(to, "|") {
-                rt::panic(err("unsafe path in the packaged files list", 221, rel_path))
+                panic(err("unsafe path in the packaged files list", 221, rel_path))
             }
             if !eq(mode, "644") && !eq(mode, "755") {
-                rt::panic(err("file mode must be 644 or 755", 221, rel_path))
+                panic(err("file mode must be 644 or 755", 221, rel_path))
             }
             set fh = fl.at(k).get("blake3").as_string_or("")
             if fh.len() > 0 && !checksum_ok_format(fh) {
-                rt::panic(err("malformed blake3 in the packaged files list", 221, rel_path))
+                panic(err("malformed blake3 in the packaged files list", 221, rel_path))
             }
             files.push(from + "|" + to + "|" + mode + "|" + fh)
         }
@@ -394,12 +394,12 @@ public fun resolve_text(name: string, want: string, text: string, sig: string, r
     set deps: string[] = []
     set dl = versions.at(best).get("deps")
     if dl.len() > 64 {
-        rt::panic(err("release declares too many dependencies", 214, rel_path))
+        panic(err("release declares too many dependencies", 214, rel_path))
     }
     for k in 0..dl.len() {
         set d = dl.at(k).as_string()
         if !valid_dep_spec(d) {
-            rt::panic(err("release has a malformed dependency: " + d, 214, rel_path))
+            panic(err("release has a malformed dependency: " + d, 214, rel_path))
         }
         deps.push(d)
     }

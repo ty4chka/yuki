@@ -106,7 +106,7 @@ public fun write_entry(name: string, seq: int64, versions: JsonValue, keyname: s
     dir_create_all(entry_dir(name))
     file_write_text(rel, text)
     file_write_text(rel + ".sig", pubkey_of(keyname) + " " + sig + "\n")
-    ok("wrote " + c_accent(rel) + " " + c_dim("seq " + cast(seq, "string") + ", valid 90 days"))
+    ok("wrote " + c_accent(rel) + " " + c_dim("seq " + rt::cast(seq, "string") + ", valid 90 days"))
 }
 
 // ── index add ───────────────────────────────────────────────────────────
@@ -307,9 +307,9 @@ public fun cmd_index_check(download: bool) {
         }
     }
     if problems > 0 {
-        panic(err(cast(problems, "string") + " problem(s) in the index", 213, "index"))
+        panic(err(rt::cast(problems, "string") + " problem(s) in the index", 213, "index"))
     }
-    ok("index is healthy " + c_dim(cast(checked, "string") + " release(s) verified"))
+    ok("index is healthy " + c_dim(rt::cast(checked, "string") + " release(s) verified"))
 }
 
 // ── catalog ─────────────────────────────────────────────────────────────
@@ -354,7 +354,7 @@ public fun cmd_index_catalog(keyname: string) {
     set text = json_pretty(root) + "\n"
     file_write_text("catalog.json", text)
     file_write_text("catalog.json.sig", sign_text(keyname, text) + "\n")
-    ok("wrote catalog.json and .sig " + c_dim(cast(pk.len(), "string") + " packages, seq " + cast(seq, "string")))
+    ok("wrote catalog.json and .sig " + c_dim(rt::cast(pk.len(), "string") + " packages, seq " + rt::cast(seq, "string")))
 }
 
 // ── renew-all ───────────────────────────────────────────────────────────
@@ -379,7 +379,7 @@ public fun cmd_index_renew_all(keyname: string, days: int64) {
             rewrite renewed += 1
         }
     }
-    ok("renewed " + cast(renewed, "string") + " entr" + "ies")
+    ok("renewed " + rt::cast(renewed, "string") + " entr" + "ies")
 }
 
 // ── cosign: второй (третий…) издатель подтверждает содержимое ──────────
@@ -429,5 +429,5 @@ public fun cmd_index_cosign(name: string, keyname: string) {
     set text = json_pretty(root) + "\n"
     file_write_text(rel, text)
     file_write_text(rel + ".sig", myp + " " + sign_text(keyname, text) + "\n")
-    ok("co-signed " + c_accent(rel) + " " + c_dim(cast(csigs.len(), "string") + " publisher signature(s)"))
+    ok("co-signed " + c_accent(rel) + " " + c_dim(rt::cast(csigs.len(), "string") + " publisher signature(s)"))
 }

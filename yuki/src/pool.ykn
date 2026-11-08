@@ -164,7 +164,7 @@ public fun pool_run(dir: string, count: int64, parallel: int64, ref nidx: int64[
     set t0 = now_ms()
     loop {
         while started < count && running < parallel {
-            handles[started] = spawn(rt::cast(pool_worker, "ptr<void>"), rt::cast(started + 1, "ptr<void>"))
+            rewrite handles[started] = spawn(rt::cast(pool_worker, "ptr<void>"), rt::cast(started + 1, "ptr<void>"))
             rewrite status[started] = 1
             if nidx[started] >= 0 {
                 view.set_state(nidx[started], 1)
@@ -236,7 +236,7 @@ public fun pool_raise(dir: string, count: int64, labels: string[]) {
                 rewrite code = rt::cast(parse_int(l[1]) ?? 755, "int32")
                 rewrite msg = l[2]
             }
-            rt::panic(err(msg, code, labels[i]))
+            panic(err(msg, code, labels[i]))
         }
     }
 }

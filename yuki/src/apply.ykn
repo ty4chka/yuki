@@ -53,7 +53,7 @@ fun lock_acquire() {
         set alive = false
         if file_exists(pf) {
             set pid: int64 = parse_int(trim(file_read_text(pf))) ?? 0
-            if pid > 0 && kill(cast(pid, "int32"), 0) == 0 {
+            if pid > 0 && kill(rt::cast(pid, "int32"), 0) == 0 {
                 rewrite alive = true
             }
         }
@@ -65,7 +65,7 @@ fun lock_acquire() {
             panic(err("could not take the lock: " + ld, 730, ld))
         }
     }
-    file_write_text(path_join(ld, "pid"), cast(getpid(), "string"))
+    file_write_text(path_join(ld, "pid"), rt::cast(getpid(), "string"))
 }
 
 fun lock_release() {
@@ -85,7 +85,7 @@ fun jr(txid: string, line: string) {
 fun restore_file(backup: string, dest: string, mode: string) {
     set tmp = dest + ".yuki-tmp"
     file_copy(backup, tmp)
-    set m: uint32 = cast(parse_int(mode) ?? 420, "uint32")
+    set m: uint32 = rt::cast(parse_int(mode) ?? 420, "uint32")
     chmod(tmp, m)
     set root: uint32 = 0
     chown(tmp, root, root)
@@ -136,8 +136,8 @@ public fun rollback_tx(txid: string) {
             }
         }
     }
-    file_write_text(path_join(tx_dir(txid), "ROLLED_BACK"), cast(now_secs(), "string"))
-    history_add(cast(now_secs(), "string") + " rollback " + txid)
+    file_write_text(path_join(tx_dir(txid), "ROLLED_BACK"), rt::cast(now_secs(), "string"))
+    history_add(rt::cast(now_secs(), "string") + " rollback " + txid)
     sync_disk()
 }
 
@@ -259,7 +259,7 @@ fun backup_existing(txid: string, rel: string, dest: string, old_line: string) {
     set bak = path_join(path_join(tx_dir(txid), "bak"), rel)
     dir_create_all(path_parent(bak))
     file_copy(dest, bak)
-    jr(txid, "bak " + dest + " " + bak + " " + cast(md.mode, "string"))
+    jr(txid, "bak " + dest + " " + bak + " " + rt::cast(md.mode, "string"))
 }
 
 // ── фиксация одного пакета ──────────────────────────────────────────────
@@ -404,7 +404,7 @@ fun commit_item(txid: string, ref items: ApplyItem[], n: int64, overwrite: bool)
 public fun apply_transaction(ref items: ApplyItem[], overwrite: bool) -> string {
     lock_acquire()
     recover_interrupted()
-    set txid = cast(now_ms(), "string")
+    set txid = rt::cast(now_ms(), "string")
     dir_create_all(tx_dir(txid))
     file_write_text(path_join(tx_dir(txid), "journal"), "")
     sus {
@@ -420,12 +420,12 @@ public fun apply_transaction(ref items: ApplyItem[], overwrite: bool) -> string 
         lock_release()
         panic(err("transaction failed and was rolled back: " + errkind, 732, txid))
     }
-    file_write_text(path_join(tx_dir(txid), "COMMITTED"), cast(now_secs(), "string"))
+    file_write_text(path_join(tx_dir(txid), "COMMITTED"), rt::cast(now_secs(), "string"))
     set names: string[] = []
     for n in 0..items.len() {
         names.push(items[n].name + "-" + items[n].version)
     }
-    history_add(cast(now_secs(), "string") + " install " + txid + " " + str_join(names, ","))
+    history_add(rt::cast(now_secs(), "string") + " install " + txid + " " + str_join(names, ","))
     sync_disk()
     lock_release()
     return txid
@@ -441,7 +441,7 @@ public fun remove_package(name: string, force: bool) -> string {
     }
     lock_acquire()
     recover_interrupted()
-    set txid = cast(now_ms(), "string")
+    set txid = rt::cast(now_ms(), "string")
     dir_create_all(path_join(tx_dir(txid), "db"))
     file_write_text(path_join(tx_dir(txid), "journal"), "")
     sus {
@@ -489,8 +489,8 @@ public fun remove_package(name: string, force: bool) -> string {
         lock_release()
         panic(err("removal failed and was rolled back: " + errkind, 732, txid))
     }
-    file_write_text(path_join(tx_dir(txid), "COMMITTED"), cast(now_secs(), "string"))
-    history_add(cast(now_secs(), "string") + " remove " + txid + " " + name)
+    file_write_text(path_join(tx_dir(txid), "COMMITTED"), rt::cast(now_secs(), "string"))
+    history_add(rt::cast(now_secs(), "string") + " remove " + txid + " " + name)
     sync_disk()
     lock_release()
     return txid
