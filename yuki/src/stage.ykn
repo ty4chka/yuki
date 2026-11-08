@@ -17,7 +17,6 @@ load std.threads: sleep
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all, dir_remove_all
 load std.fs.defaults: dir_temp
-load std.fs.paths: path_join
 load std.outf: strip_ansi
 load std.strings: slice, split, str_join, eq, trim
 load .errors: YukiError, err
@@ -28,32 +27,32 @@ load .sysbuild: child_fetch
 load .pool: pool_paint, pool_ok
 load .verify: VerifyError
 load .view: InstallView
-load .util: now_ms
+load .util: now_ms, join2
 
 public fun stage_create() -> string {
     if !is_root() {
         // запросы без root (search, show, outdated): рабочий каталог в temp, привилегий нет
-        set own = path_join(path_join(dir_temp(), "yuki-" + cast(now_ms(), "string")), "stage")
-        dir_create_all(path_join(own, "dl"))
-        dir_create_all(path_join(own, "art"))
-        dir_create_all(path_join(own, "root"))
+        set own = join2(join2(dir_temp(), "yuki-" + cast(now_ms(), "string")), "stage")
+        dir_create_all(join2(own, "dl"))
+        dir_create_all(join2(own, "art"))
+        dir_create_all(join2(own, "root"))
         return own
     }
-    set base = path_join(state_dir(), "stage")
+    set base = join2(state_dir(), "stage")
     dir_create_all(base)
     set m711: uint32 = 457
     set m700: uint32 = 448
     set nb: uint32 = 65534
     chmod(base, m711)
-    set stage = path_join(base, cast(now_ms(), "string"))
+    set stage = join2(base, cast(now_ms(), "string"))
     dir_create_all(stage)
     chmod(stage, m711)
-    set dl = path_join(stage, "dl")
+    set dl = join2(stage, "dl")
     dir_create_all(dl)
     chmod(dl, m700)
     chown(dl, nb, nb)
-    dir_create_all(path_join(stage, "art"))
-    dir_create_all(path_join(stage, "root"))
+    dir_create_all(join2(stage, "art"))
+    dir_create_all(join2(stage, "root"))
     return stage
 }
 
@@ -63,7 +62,7 @@ public fun stage_remove(stage: string) {
 
 // Корни установки: пишет родитель (root), читает ребёнок.
 public fun write_roots(stage: string, ref roots: string[]) {
-    file_write_text(path_join(stage, "roots"), str_join(roots, "\n") + "\n")
+    file_write_text(join2(stage, "roots"), str_join(roots, "\n") + "\n")
 }
 
 // Текст от ребёнка недоверенный: без управляющих последовательностей, одной строкой, обрезанный.
@@ -78,7 +77,7 @@ fun clean_msg(s: string) -> string {
 // mode: "plan" | "fetch" | "keys" | "catalog". Возвращается только после успешного завершения ребёнка.
 // jobmap[j] — узел панели для j-й загрузки (только для mode == "fetch"; иначе пустой массив).
 public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jobmap: int64[]) {
-    set dl = path_join(stage, "dl")
+    set dl = join2(stage, "dl")
     set pid = fork()
     if pid < 0 {
         panic(err("fork failed", 703, ""))
@@ -89,26 +88,26 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
             if eq(mode, "plan") {
                 child_plan(dl)
             } elif eq(mode, "fetch") {
-                child_fetch(dl, path_join(stage, "approved"))
+                child_fetch(dl, join2(stage, "approved"))
             } elif eq(mode, "catalog") {
                 child_catalog(dl)
             } else {
                 child_keys(dl)
             }
-            file_write_text(path_join(dl, "DONE-" + mode), "ok")
+            file_write_text(join2(dl, "DONE-" + mode), "ok")
         } catch e: YukiError {
-            file_write_text(path_join(dl, "ERROR"), e.message)
+            file_write_text(join2(dl, "ERROR"), e.message)
         } catch e: VerifyError {
-            file_write_text(path_join(dl, "ERROR"), e.message)
+            file_write_text(join2(dl, "ERROR"), e.message)
         } catch {
-            file_write_text(path_join(dl, "ERROR"), "unexpected failure: " + errkind)
+            file_write_text(join2(dl, "ERROR"), "unexpected failure: " + errkind)
         }
         exit(0)
     }
 
     // родитель не блокируется: рисует панель по файлам прогресса ребёнка
     set t0 = now_ms()
-    set pool_dir = path_join(dl, "pool")
+    set pool_dir = join2(dl, "pool")
     while waitpid(pid, 1) == 0 {
         if eq(mode, "fetch") && jobmap.len() > 0 {
             pool_paint(pool_dir, jobmap.len(), ref jobmap, t0, ref ~view)
@@ -117,7 +116,7 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
                     view.set_state(jobmap[j], 2)
                 }
             }
-            set act = path_join(dl, "activity")
+            set act = join2(dl, "activity")
             if file_exists(act) {
                 sus {
                     view.set_activity(clean_msg(file_read_text(act)))
@@ -129,10 +128,10 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
         sleep(60u64)
     }
     kill_all_as(nobody_id())
-    if !file_exists(path_join(dl, "DONE-" + mode)) {
+    if !file_exists(join2(dl, "DONE-" + mode)) {
         set why = "the unprivileged step did not finish"
-        if file_exists(path_join(dl, "ERROR")) {
-            rewrite why = clean_msg(file_read_text(path_join(dl, "ERROR")))
+        if file_exists(join2(dl, "ERROR")) {
+            rewrite why = clean_msg(file_read_text(join2(dl, "ERROR")))
         }
         panic(err(why, 751, mode))
     }

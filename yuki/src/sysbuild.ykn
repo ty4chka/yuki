@@ -13,12 +13,12 @@ load core.panic: panic
 load std.process: command_new, run
 load std.fs.files: file_exists, file_read_text, file_write_text, file_copy, file_metadata
 load std.fs.dirs: dir_create_all, dir_list
-load std.fs.paths: path_join, path_parent, path_file_name
+load std.fs.paths: path_parent, path_file_name
 load std.fs.archives.tar: tar_unpack, tar_pack_dir
 load std.os.unix: chmod
 load std.env: get_or
 load std.strings: lines, split, eq, trim, slice, str_join
-load .util: starts_with
+load .util: starts_with, join2
 load .errors: YukiError, err
 load .config: config_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .verify: VerifyError, check_blake3, audit_tar
@@ -44,14 +44,14 @@ public fun build_policy() -> string {
     if have_bwrap() {
         return "sandbox"
     }
-    if file_exists(path_join(config_dir(), "allow_unsandboxed_build")) {
+    if file_exists(join2(config_dir(), "allow_unsandboxed_build")) {
         return "unsandboxed"
     }
     return "refused"
 }
 
 fun pkg_dir(dl: string, name: string) -> string {
-    return path_join(path_join(dl, "pkgs"), name)
+    return join2(join2(dl, "pkgs"), name)
 }
 
 // ── где лежит компилятор ────────────────────────────────────────────────
@@ -64,7 +64,7 @@ public fun tool_dir(argv0: string) -> string {
     } else {
         set dirs = split(get_or("PATH", ""), ":")
         for i in 0..dirs.len() {
-            if dirs[i].len() > 0 && file_exists(path_join(dirs[i], argv0)) {
+            if dirs[i].len() > 0 && file_exists(join2(dirs[i], argv0)) {
                 rewrite found = dirs[i]
                 break
             }
@@ -86,7 +86,7 @@ public fun tool_root(dir: string) -> string {
 
 fun extra_binds() -> string[] {
     set out: string[] = []
-    set f = path_join(config_dir(), "ro_binds")
+    set f = join2(config_dir(), "ro_binds")
     if file_exists(f) {
         set ls = lines(file_read_text(f))
         for i in 0..ls.len() {
@@ -171,25 +171,25 @@ fun build_source(dl: string, ref pn: PNode) {
         panic(err("no sandbox available for building " + pn.rel.name + " (install bubblewrap)", 742, pn.rel.name))
     }
     set dir = pkg_dir(dl, pn.rel.name)
-    set src = path_join(dir, "src" + archive_ext(pn.rel.src_url))
+    set src = join2(dir, "src" + archive_ext(pn.rel.src_url))
     check_blake3(src, pn.rel.src_checksum)
     audit_tar(src, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, false)
 
-    set build_dir = path_join(dir, "build")
+    set build_dir = join2(dir, "build")
     dir_create_all(build_dir)
     tar_unpack(src, build_dir)
     set work = source_root(build_dir)
-    file_write_text(path_join(dl, "activity"), "building " + pn.rel.name)
+    file_write_text(join2(dl, "activity"), "building " + pn.rel.name)
     run_build(work, pn.rel.build, pn.rel.src_net, policy)
-    file_write_text(path_join(dl, "activity"), "packaging " + pn.rel.name)
+    file_write_text(join2(dl, "activity"), "packaging " + pn.rel.name)
 
     // в пакет попадает только то, что перечислено в подписанной записи
-    set out = path_join(dir, "out")
+    set out = join2(dir, "out")
     dir_create_all(out)
     for i in 0..pn.rel.files.len() {
         set p = split(pn.rel.files[i], "|")
-        set from = path_join(work, p[0])
-        set to = path_join(out, p[1])
+        set from = join2(work, p[0])
+        set to = join2(out, p[1])
         if !file_exists(from) {
             panic(err("build did not produce " + p[0], 744, pn.rel.name))
         }
@@ -209,7 +209,7 @@ fun build_source(dl: string, ref pn: PNode) {
         }
         chmod(to, mode)
     }
-    tar_pack_dir(path_join(dir, "pkg.tar.zst"), out, "auto")
+    tar_pack_dir(join2(dir, "pkg.tar.zst"), out, "auto")
 }
 
 // Шаг ребёнка «fetch»: параллельно скачать всё, затем собрать одобренное.
@@ -222,7 +222,7 @@ public fun child_fetch(dl: string, approved_path: string) {
     }
 
     // 1. задачи загрузки: готовые сборки и архивы исходников
-    set pdir = path_join(dl, "pool")
+    set pdir = join2(dl, "pool")
     pool_prepare(pdir)
     set labels: string[] = []
     set nidx: int64[] = []
@@ -232,7 +232,7 @@ public fun child_fetch(dl: string, approved_path: string) {
         set dir = pkg_dir(dl, name)
         if eq(nodes[i].action, "bin") {
             dir_create_all(dir)
-            pool_add(pdir, count, "file", nodes[i].rel.bin_url, nodes[i].rel.bin_checksum, path_join(dir, "pkg" + archive_ext(nodes[i].rel.bin_url)), name)
+            pool_add(pdir, count, "file", nodes[i].rel.bin_url, nodes[i].rel.bin_checksum, join2(dir, "pkg" + archive_ext(nodes[i].rel.bin_url)), name)
             labels.push(name)
             nidx.push(-1)
             rewrite count += 1
@@ -247,7 +247,7 @@ public fun child_fetch(dl: string, approved_path: string) {
                 panic(err("building " + name + " was not approved", 745, name))
             }
             dir_create_all(dir)
-            pool_add(pdir, count, "file", nodes[i].rel.src_url, nodes[i].rel.src_checksum, path_join(dir, "src" + archive_ext(nodes[i].rel.src_url)), name)
+            pool_add(pdir, count, "file", nodes[i].rel.src_url, nodes[i].rel.src_checksum, join2(dir, "src" + archive_ext(nodes[i].rel.src_url)), name)
             labels.push(name)
             nidx.push(-1)
             rewrite count += 1
@@ -267,5 +267,5 @@ public fun child_fetch(dl: string, approved_path: string) {
             build_source(dl, ref nodes[i])
         }
     }
-    file_write_text(path_join(dl, "activity"), "")
+    file_write_text(join2(dl, "activity"), "")
 }

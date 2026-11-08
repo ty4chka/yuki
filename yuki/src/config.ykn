@@ -4,11 +4,10 @@ load core.panic: panic
 load std.fs.defaults: dir_app_config, dir_app_cache, dir_app_data
 load std.fs.dirs: dir_create_all
 load std.fs.files: file_exists, file_read_text
-load std.fs.paths: path_join
 load std.env: get_env, get_or
 load std.sysinfo: os_name, cpu_arch
 load std.strings: trim, lines, eq, lower, slice, contains, split, str_join
-load .util: ends_with
+load .util: ends_with, join2
 load .errors: YukiError, err
 
 public static MAX_ENTRIES: int64 = 20000
@@ -98,7 +97,7 @@ public fun ensure_dirs() {
 public fun index_urls() -> string[] {
     set raw = trim(get_or("YUKI_INDEX", ""))
     if raw.len() == 0 {
-        set f = path_join(config_dir(), "index_url")
+        set f = join2(config_dir(), "index_url")
         if file_exists(f) {
             rewrite raw = trim(file_read_text(f))
         }
@@ -137,7 +136,7 @@ public fun host_allowed(host: string) -> bool {
     if eq(h, "objects.githubusercontent.com") || eq(h, "gitlab.com") || eq(h, "codeberg.org") {
         return true
     }
-    set extra = path_join(config_dir(), "allowed_hosts")
+    set extra = join2(config_dir(), "allowed_hosts")
     if file_exists(extra) {
         set ls = lines(file_read_text(extra))
         for i in 0..ls.len() {

@@ -13,7 +13,7 @@ load core.panic: panic
 load std.os.unix: chmod, chown, kill, getpid
 load std.fs.files: file_exists, file_copy, file_rename, file_remove, file_metadata, file_append_text, file_read_text, file_write_text, file_symlink
 load std.fs.dirs: dir_create, dir_create_all, dir_exists, dir_walk, dir_list, dir_remove, dir_remove_all, dir_is_empty, dir_copy_all
-load std.fs.paths: path_join, path_parent, path_file_name, path_is_symlink
+load std.fs.paths: path_parent, path_file_name, path_is_symlink
 load std.hash.blake3: blake3_file
 load std.strings: lines, split, slice, eq, str_join, trim, parse_int
 load .errors: YukiError, err
@@ -22,7 +22,7 @@ load .priv: sync_disk
 load .policy: policy_check, is_config
 load .verify: link_target_ok
 load .sysdb: PkgRecord, db_has, db_dir, db_read, db_write, db_files, db_remove, owner_of, dependents_of, history_add, f_hash, f_mode, f_kind, f_path
-load .util: now_secs, now_ms, starts_with
+load .util: now_secs, now_ms, starts_with, join2
 
 public struct ApplyItem {
     name: string
@@ -44,14 +44,14 @@ fun exists_any(p: string) -> bool {
 // ── блокировка ──────────────────────────────────────────────────────────
 
 fun lock_dir() -> string {
-    return path_join(state_dir(), "lock")
+    return join2(state_dir(), "lock")
 }
 
 fun lock_acquire() {
     dir_create_all(state_dir())
     set ld = lock_dir()
     if !dir_create(ld) {
-        set pf = path_join(ld, "pid")
+        set pf = join2(ld, "pid")
         set alive = false
         if file_exists(pf) {
             set pid: int64 = parse_int(trim(file_read_text(pf))) ?? 0
@@ -67,7 +67,7 @@ fun lock_acquire() {
             panic(err("could not take the lock: " + ld, 730, ld))
         }
     }
-    file_write_text(path_join(ld, "pid"), cast(getpid(), "string"))
+    file_write_text(join2(ld, "pid"), cast(getpid(), "string"))
 }
 
 fun lock_release() {
@@ -77,11 +77,11 @@ fun lock_release() {
 // ── журнал и откат ──────────────────────────────────────────────────────
 
 fun tx_dir(txid: string) -> string {
-    return path_join(path_join(state_dir(), "tx"), txid)
+    return join2(join2(state_dir(), "tx"), txid)
 }
 
 fun jr(txid: string, line: string) {
-    file_append_text(path_join(tx_dir(txid), "journal"), line + "\n")
+    file_append_text(join2(tx_dir(txid), "journal"), line + "\n")
 }
 
 fun restore_file(backup: string, dest: string, mode: string) {
@@ -106,7 +106,7 @@ fun restore_link(dest: string, target: string) {
 // Откат по журналу в обратном порядке. Терпим к «наполовину сделанным» шагам:
 // удаление несуществующего и повторное восстановление безопасны.
 public fun rollback_tx(txid: string) {
-    set jf = path_join(tx_dir(txid), "journal")
+    set jf = join2(tx_dir(txid), "journal")
     if !file_exists(jf) {
         panic(err("no journal for transaction " + txid, 731, txid))
     }
@@ -134,24 +134,24 @@ public fun rollback_tx(txid: string) {
         } elif eq(p[0], "db") && p.len() == 3 {
             db_remove(p[1])
             if eq(p[2], "old") {
-                dir_copy_all(path_join(path_join(tx_dir(txid), "db"), p[1]), db_dir(p[1]))
+                dir_copy_all(join2(join2(tx_dir(txid), "db"), p[1]), db_dir(p[1]))
             }
         }
     }
-    file_write_text(path_join(tx_dir(txid), "ROLLED_BACK"), cast(now_secs(), "string"))
+    file_write_text(join2(tx_dir(txid), "ROLLED_BACK"), cast(now_secs(), "string"))
     history_add(cast(now_secs(), "string") + " rollback " + txid)
     sync_disk()
 }
 
 // Незавершённые транзакции (питание, kill -9): откатить перед новой работой.
 fun recover_interrupted() {
-    set base = path_join(state_dir(), "tx")
+    set base = join2(state_dir(), "tx")
     if !dir_exists(base) {
         return
     }
     set all = dir_list(base)
     for i in 0..all.len() {
-        if !file_exists(path_join(all[i], "COMMITTED")) && !file_exists(path_join(all[i], "ROLLED_BACK")) && file_exists(path_join(all[i], "journal")) {
+        if !file_exists(join2(all[i], "COMMITTED")) && !file_exists(join2(all[i], "ROLLED_BACK")) && file_exists(join2(all[i], "journal")) {
             sus {
                 rollback_tx(path_file_name(all[i]))
             } catch {
@@ -258,7 +258,7 @@ fun backup_existing(txid: string, rel: string, dest: string, old_line: string) {
         return
     }
     set md = file_metadata(dest)
-    set bak = path_join(path_join(tx_dir(txid), "bak"), rel)
+    set bak = join2(join2(tx_dir(txid), "bak"), rel)
     dir_create_all(path_parent(bak))
     file_copy(dest, bak)
     jr(txid, "bak " + dest + " " + bak + " " + cast(md.mode, "string"))
@@ -289,9 +289,9 @@ fun commit_item(txid: string, ref items: ApplyItem[], n: int64, overwrite: bool)
     }
 
     // ── A. намерение: резервные копии и полный журнал до первого изменения ──
-    dir_create_all(path_join(tx_dir(txid), "db"))
+    dir_create_all(join2(tx_dir(txid), "db"))
     if db_has(name) {
-        dir_copy_all(db_dir(name), path_join(path_join(tx_dir(txid), "db"), name))
+        dir_copy_all(db_dir(name), join2(join2(tx_dir(txid), "db"), name))
         jr(txid, "db " + name + " old")
     } else {
         jr(txid, "db " + name + " new")
@@ -408,7 +408,7 @@ public fun apply_transaction(ref items: ApplyItem[], overwrite: bool) -> string 
     recover_interrupted()
     set txid = cast(now_ms(), "string")
     dir_create_all(tx_dir(txid))
-    file_write_text(path_join(tx_dir(txid), "journal"), "")
+    file_write_text(join2(tx_dir(txid), "journal"), "")
     sus {
         for n in 0..items.len() {
             commit_item(txid, ref items, n, overwrite)
@@ -422,7 +422,7 @@ public fun apply_transaction(ref items: ApplyItem[], overwrite: bool) -> string 
         lock_release()
         panic(err("transaction failed and was rolled back: " + errkind, 732, txid))
     }
-    file_write_text(path_join(tx_dir(txid), "COMMITTED"), cast(now_secs(), "string"))
+    file_write_text(join2(tx_dir(txid), "COMMITTED"), cast(now_secs(), "string"))
     set names: string[] = []
     for n in 0..items.len() {
         names.push(items[n].name + "-" + items[n].version)
@@ -444,12 +444,12 @@ public fun remove_package(name: string, force: bool) -> string {
     lock_acquire()
     recover_interrupted()
     set txid = cast(now_ms(), "string")
-    dir_create_all(path_join(tx_dir(txid), "db"))
-    file_write_text(path_join(tx_dir(txid), "journal"), "")
+    dir_create_all(join2(tx_dir(txid), "db"))
+    file_write_text(join2(tx_dir(txid), "journal"), "")
     sus {
         set files = db_files(name)
-        set tx_db: string = path_join(tx_dir(txid), "db")
-        set db_backup: string = path_join(tx_db, name)
+        set tx_db: string = join2(tx_dir(txid), "db")
+        set db_backup: string = join2(tx_db, name)
         dir_copy_all(db_dir(name), db_backup)
         jr(txid, "db " + name + " old")
         // намерение: резервные копии и журнал до удаления
@@ -491,7 +491,7 @@ public fun remove_package(name: string, force: bool) -> string {
         lock_release()
         panic(err("removal failed and was rolled back: " + errkind, 732, txid))
     }
-    file_write_text(path_join(tx_dir(txid), "COMMITTED"), cast(now_secs(), "string"))
+    file_write_text(join2(tx_dir(txid), "COMMITTED"), cast(now_secs(), "string"))
     history_add(cast(now_secs(), "string") + " remove " + txid + " " + name)
     sync_disk()
     lock_release()

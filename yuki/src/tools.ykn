@@ -9,7 +9,6 @@ load std.env: get_or
 load std.json: json_parse
 load std.fs.files: file_exists, file_read_text, file_write_text, file_remove, file_metadata, file_size
 load std.fs.dirs: dir_exists, dir_walk, dir_remove_all, dir_create_all
-load std.fs.paths: path_join
 load std.fs.archives.tar: tar_pack_dir
 load std.hash.blake3: blake3_file
 load std.outf: supports_truecolor
@@ -160,8 +159,8 @@ fun verified_catalog() -> string {
         set nomap: int64[] = []
         run_child(stage, "catalog", ref ~quiet, ref nomap)
         set dl = join2(stage, "dl")
-        rewrite text = file_read_text(path_join(dl, "catalog.json"))
-        set sig = trim(file_read_text(path_join(dl, "catalog.json.sig")))
+        rewrite text = file_read_text(join2(dl, "catalog.json"))
+        set sig = trim(file_read_text(join2(dl, "catalog.json.sig")))
         set keys = trusted_keys()
         if keys.len() == 0 {
             panic(err("no trusted keys yet", 202, "catalog.json"))
@@ -456,7 +455,7 @@ public fun cmd_doctor() {
         set bits: uint32 = file_metadata(cfg).mode & mask
         chk(bits == zero, cfg + " is not writable by others", cfg + " is writable by group/others", "sudo chmod go-w " + cfg + "   (anyone could add trusted keys)", ref ~problems)
     }
-    chk(!dir_exists(path_join(state_dir(), "lock")), "no stale lock", "a lock directory exists", "if no yuki is running, remove it: sudo rm -r " + path_join(state_dir(), "lock"), ref ~problems)
+    chk(!dir_exists(join2(state_dir(), "lock")), "no stale lock", "a lock directory exists", "if no yuki is running, remove it: sudo rm -r " + join2(state_dir(), "lock"), ref ~problems)
     chk(db_names().len() >= 0, cast(db_names().len(), "string") + " package(s) in the database", "database unreadable", "check permissions of " + state_dir(), ref ~problems)
 
     if idx.len() > 0 {
@@ -517,7 +516,7 @@ public fun cmd_clean(everything: bool) {
         }
     }
     if is_root() {
-        set stage = path_join(state_dir(), "stage")
+        set stage = join2(state_dir(), "stage")
         if dir_exists(stage) {
             dir_remove_all(stage)
         }
@@ -547,7 +546,7 @@ public fun cmd_hold(name: string) {
     dir_create_all(config_dir())
     set h = held_names()
     h.push(name)
-    file_write_text(path_join(config_dir(), "hold"), str_join(h, "\n") + "\n")
+    file_write_text(join2(config_dir(), "hold"), str_join(h, "\n") + "\n")
     ok(name + " is held at " + db_read(name).version + ": upgrade will skip it")
 }
 
@@ -563,7 +562,7 @@ public fun cmd_unhold(name: string) {
             out.push(h[i])
         }
     }
-    file_write_text(path_join(config_dir(), "hold"), str_join(out, "\n") + "\n")
+    file_write_text(join2(config_dir(), "hold"), str_join(out, "\n") + "\n")
     if found {
         ok(name + " is no longer held")
     } else {

@@ -4,7 +4,6 @@ load core.utils: cast
 load core.panic: panic
 load std.io: println
 load std.json: JsonValue, json_parse, json_object, json_array, json_string, json_int, json_bool, json_pretty
-load std.fs.paths: path_join
 load std.fs.dirs: dir_create_all, dir_exists, dir_remove_all
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.strings: eq, trim, slice, pad_end, split
@@ -13,7 +12,7 @@ load .errors: YukiError, err
 load .config: config_dir, cache_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .ui: ok, info, warn, bad, step, kv, card, done, rule, c_accent, c_dim, c_good, c_warn, c_bad, c_speed, c_bold, render_bar
 load .theme: sym, paint, theme_path, theme_palette, theme_write_template, animation_on
-load .util: valid_name, valid_version, ver_cmp, now_secs, now_ms, valid_dep_spec, index_of
+load .util: valid_name, valid_version, ver_cmp, now_secs, now_ms, valid_dep_spec, index_of, join2
 load .verify: VerifyError, AuditReport, check_blake3, verify_signature, audit_tar
 load .index: Release, resolve, entry_rel, entry_dir
 load .manifest: Dep, dep_line, upsert_dep, remove_dep, list_deps, merge_via, prune_owner, via_of
@@ -59,7 +58,7 @@ public fun cmd_inspect(archive: string) {
 // Скачать и проверить все архивы параллельно. nidx[i] — узел панели для i-й задачи.
 // Возвращает суммарный размер.
 fun fetch_many(ref urls: string[], ref sums: string[], ref labels: string[], ref nidx: int64[], ref ~view: InstallView) -> int64 {
-    set dir = path_join(cache_dir(), "pool-" + cast(now_ms(), "string"))
+    set dir = join2(cache_dir(), "pool-" + cast(now_ms(), "string"))
     pool_prepare(dir)
     for i in 0..urls.len() {
         pool_add(dir, i, "cache", urls[i], sums[i], "", labels[i])

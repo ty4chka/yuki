@@ -8,9 +8,9 @@ load core.utils: cast
 load core.panic: panic
 load std.fs.files: file_exists, file_read_text, file_write_text, file_append_text
 load std.fs.dirs: dir_create_all, dir_exists, dir_list, dir_remove_all
-load std.fs.paths: path_join, path_file_name
+load std.fs.paths: path_file_name
 load std.strings: lines, split, trim, eq, slice, str_join, parse_int
-load .util: index_of
+load .util: index_of, join2
 load .errors: YukiError, err
 load .config: state_dir, config_dir
 
@@ -27,11 +27,11 @@ public struct PkgRecord {
 }
 
 public fun db_root() -> string {
-    return path_join(state_dir(), "db")
+    return join2(state_dir(), "db")
 }
 
 public fun db_dir(name: string) -> string {
-    return path_join(db_root(), name)
+    return join2(db_root(), name)
 }
 
 public fun db_has(name: string) -> bool {
@@ -61,7 +61,7 @@ fun kv_get(ls: string[], key: string) -> string {
 }
 
 public fun db_read(name: string) -> PkgRecord {
-    set f = path_join(db_dir(name), "desc")
+    set f = join2(db_dir(name), "desc")
     if !file_exists(f) {
         panic(err("package is not installed: " + name, 710, name))
     }
@@ -93,12 +93,12 @@ public fun db_write(rec: PkgRecord, ref files: string[]) {
         "reason=" + rec.reason,
         "summary=" + rec.summary
     ]
-    file_write_text(path_join(db_dir(rec.name), "desc"), str_join(d, "\n") + "\n")
-    file_write_text(path_join(db_dir(rec.name), "files"), str_join(files, "\n") + "\n")
+    file_write_text(join2(db_dir(rec.name), "desc"), str_join(d, "\n") + "\n")
+    file_write_text(join2(db_dir(rec.name), "files"), str_join(files, "\n") + "\n")
 }
 
 public fun db_files(name: string) -> string[] {
-    set f = path_join(db_dir(name), "files")
+    set f = join2(db_dir(name), "files")
     set out: string[] = []
     if !file_exists(f) {
         return out
@@ -166,13 +166,13 @@ public fun dependents_of(name: string) -> string[] {
 
 public fun history_add(line: string) {
     dir_create_all(state_dir())
-    file_append_text(path_join(state_dir(), "history"), line + "\n")
+    file_append_text(join2(state_dir(), "history"), line + "\n")
 }
 
 // Пакеты, которые upgrade не трогает (<config>/hold, по имени в строке).
 public fun held_names() -> string[] {
     set out: string[] = []
-    set f = path_join(config_dir(), "hold")
+    set f = join2(config_dir(), "hold")
     if file_exists(f) {
         set ls = lines(file_read_text(f))
         for i in 0..ls.len() {

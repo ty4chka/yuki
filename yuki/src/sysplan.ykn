@@ -8,14 +8,14 @@
 load core.panic: panic
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all
-load std.fs.paths: path_join, path_parent
+load std.fs.paths: path_parent
 load std.env: get_or
 load std.strings: eq, trim, lines, slice
 load .errors: YukiError, err
 load .config: MAX_INDEX_FILE
 load .index: Release, EntryText, fetch_entry, resolve_text, index_get
 load .sysdb: db_has, db_read
-load .util: dep_name, dep_version, index_of
+load .util: dep_name, dep_version, index_of, join2
 
 public struct PNode {
     rel: Release
@@ -47,7 +47,7 @@ public fun spec_ver(spec: string) -> string {
 // Корни установки лежат в <stage>/roots (пишет root, читает ребёнок).
 public fun read_roots(dl: string) -> string[] {
     set out: string[] = []
-    set f = path_join(path_parent(dl), "roots")
+    set f = join2(path_parent(dl), "roots")
     if file_exists(f) {
         set ls = lines(file_read_text(f))
         for i in 0..ls.len() {
@@ -60,11 +60,11 @@ public fun read_roots(dl: string) -> string[] {
 }
 
 fun entries_dir(dl: string) -> string {
-    return path_join(dl, "entries")
+    return join2(dl, "entries")
 }
 
 fun load_entry(dl: string, name: string, fetch_missing: bool) -> EntryText {
-    set p = path_join(entries_dir(dl), name + ".json")
+    set p = join2(entries_dir(dl), name + ".json")
     if file_exists(p) && file_exists(p + ".sig") {
         return EntryText { text: file_read_text(p), sig: file_read_text(p + ".sig") }
     }
@@ -134,12 +134,12 @@ public fun child_plan(dl: string) {
 
 // Шаг ребёнка «keys»: принести ротацию ключей.
 public fun child_keys(dl: string) {
-    file_write_text(path_join(dl, "rotation.json"), index_get("keys/rotation.json", MAX_INDEX_FILE))
-    file_write_text(path_join(dl, "rotation.sigs"), index_get("keys/rotation.sigs", 65536))
+    file_write_text(join2(dl, "rotation.json"), index_get("keys/rotation.json", MAX_INDEX_FILE))
+    file_write_text(join2(dl, "rotation.sigs"), index_get("keys/rotation.sigs", 65536))
 }
 
 // Шаг ребёнка «catalog»: каталог пакетов для поиска.
 public fun child_catalog(dl: string) {
-    file_write_text(path_join(dl, "catalog.json"), index_get("catalog.json", 4194304))
-    file_write_text(path_join(dl, "catalog.json.sig"), index_get("catalog.json.sig", 4096))
+    file_write_text(join2(dl, "catalog.json"), index_get("catalog.json", 4194304))
+    file_write_text(join2(dl, "catalog.json.sig"), index_get("catalog.json.sig", 4096))
 }

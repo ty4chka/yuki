@@ -17,7 +17,7 @@ load std.threads: spawn, join, is_finished, sleep, hardware_concurrency
 load std.env: get_or, set_env
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all
-load std.fs.paths: path_join, path_parent
+load std.fs.paths: path_parent
 load std.stdotool.format: format_speed
 load std.strings: split, parse_int, eq
 load .errors: YukiError, err
@@ -26,18 +26,18 @@ load .fetch: download
 load .pipeline: fetch_verified
 load .verify: VerifyError, check_blake3
 load .view: InstallView
-load .util: now_ms
+load .util: now_ms, join2
 
 fun p_job(dir: string, i: int64) -> string {
-    return path_join(dir, "job-" + cast(i, "string"))
+    return join2(dir, "job-" + cast(i, "string"))
 }
 
 fun p_prog(dir: string, i: int64) -> string {
-    return path_join(dir, "prog-" + cast(i, "string"))
+    return join2(dir, "prog-" + cast(i, "string"))
 }
 
 fun p_state(dir: string, i: int64) -> string {
-    return path_join(dir, "state-" + cast(i, "string"))
+    return join2(dir, "state-" + cast(i, "string"))
 }
 
 public fun pool_prepare(dir: string) {

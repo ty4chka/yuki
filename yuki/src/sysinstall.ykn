@@ -14,7 +14,7 @@ load std.io: print, println, read_line
 load std.env: get_or, set_env
 load std.fs.files: file_exists, file_read_text, file_write_text, file_copy, file_metadata
 load std.fs.dirs: dir_create_all, dir_list
-load std.fs.paths: path_join, path_file_name
+load std.fs.paths: path_file_name
 load std.fs.archives.tar: tar_unpack, tar_list, TarError
 load std.hash.blake3: blake3_file
 load std.process: run
@@ -124,7 +124,7 @@ fun approve_builds(stage: string, ref nodes: PNode[]) {
         }
         approved.push(name)
     }
-    file_write_text(path_join(stage, "approved"), str_join(approved, "\n") + "\n")
+    file_write_text(join2(stage, "approved"), str_join(approved, "\n") + "\n")
 }
 
 // ── проверка принесённого root'ом ───────────────────────────────────────
@@ -154,7 +154,7 @@ fun norm_tar_path(p: string) -> string {
 // Возвращает число сборок, результат которых нечем проверить (без хеша в записи).
 fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 {
     set unpinned: int64 = 0
-    set dl = path_join(stage, "dl")
+    set dl = join2(stage, "dl")
     set n = nodes.len()
     for k in 0..n {
         set i = n - 1 - k
@@ -162,25 +162,25 @@ fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 
             continue
         }
         set name = nodes[i].rel.name
-        set dir = path_join(path_join(dl, "pkgs"), name)
+        set dir = join2(join2(dl, "pkgs"), name)
         set from = ""
         set ext = ""
         set checksum = ""
         set origin = "binary"
         if eq(nodes[i].action, "bin") {
             rewrite ext = archive_ext(nodes[i].rel.bin_url)
-            rewrite from = path_join(dir, "pkg" + ext)
+            rewrite from = join2(dir, "pkg" + ext)
             rewrite checksum = nodes[i].rel.bin_checksum
         } else {
             rewrite ext = ".tar.zst"
-            rewrite from = path_join(dir, "pkg.tar.zst")
+            rewrite from = join2(dir, "pkg.tar.zst")
             rewrite origin = "source"
         }
         if file_metadata(dir).is_symlink || !plain_file(from) {
             panic(err("unexpected artifact layout for " + name, 753, name))
         }
 
-        set copy = path_join(path_join(stage, "art"), name + ext)
+        set copy = join2(join2(stage, "art"), name + ext)
         file_copy(from, copy)
         if eq(origin, "binary") {
             check_blake3(copy, checksum)
@@ -198,7 +198,7 @@ fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 
             }
         }
 
-        set root_dir = path_join(path_join(stage, "root"), name)
+        set root_dir = join2(join2(stage, "root"), name)
         dir_create_all(root_dir)
         tar_unpack(copy, root_dir)
 
@@ -207,7 +207,7 @@ fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 
             for q in 0..nodes[i].rel.files.len() {
                 set fp = split(nodes[i].rel.files[q], "|")
                 if fp.len() > 3 && fp[3].len() > 0 {
-                    check_blake3(path_join(root_dir, fp[1]), fp[3])
+                    check_blake3(join2(root_dir, fp[1]), fp[3])
                 } else {
                     rewrite pinned = false
                 }
@@ -257,7 +257,7 @@ fun root_names(ref roots: string[]) -> string {
 // Один общий план и одна транзакция для всех корней (install a b c, upgrade).
 fun install_core(stage: string, ref roots: string[]) {
     set t0 = now_ms()
-    set dl = path_join(stage, "dl")
+    set dl = join2(stage, "dl")
     set quiet = init InstallView("", false)
     set nomap: int64[] = []
 
@@ -621,7 +621,7 @@ public fun cmd_sys_audit() {
 }
 
 public fun cmd_sys_history() {
-    set f = path_join(state_dir(), "history")
+    set f = join2(state_dir(), "history")
     if !file_exists(f) {
         info("no transactions yet")
         return
@@ -639,7 +639,7 @@ public fun cmd_sys_rollback(txid: string) {
     sys_need_root()
     set target = txid
     if target.len() == 0 {
-        set base = path_join(state_dir(), "tx")
+        set base = join2(state_dir(), "tx")
         set best: int64 = 0
         if true {
             sus {

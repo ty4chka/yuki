@@ -13,13 +13,12 @@ load std.crypto: ed25519_public_key, ed25519_sign, random_bytes
 load std.fs.files: file_exists, file_write_text, file_read_text, file_remove
 load std.fs.dirs: dir_create_all, dir_remove_all
 load std.fs.defaults: dir_temp
-load std.fs.paths: path_join
 load std.strings: eq, contains, slice
 load .errors: YukiError, err
 load .config: host_target
 load std.io: println
 load .ui: ok, bad, info, c_dim
-load .util: valid_name, valid_version, ver_cmp, edit_distance, is_hex, now_ms
+load .util: valid_name, valid_version, ver_cmp, edit_distance, is_hex, now_ms, join2
 load .verify: is_safe_rel_path, link_target_ok, checksum_ok_format, verify_text, signed_message
 load .policy: policy_check
 
@@ -78,7 +77,7 @@ public fun cmd_selftest() {
     // имена, версии, расстояния
     check(valid_name("ripgrep") && valid_name("a-b_c1") && !valid_name("-x") && !valid_name("Up") && !valid_name("a b") && !valid_name(""), "package name rules", ref ~failed)
     check(valid_version("1.2.3") && !valid_version("1.2") && !valid_version("1.2.x") && !valid_version("01.2.3."), "version rules", ref ~failed)
-    check(ver_cmp("1.10.0", "1.9.9") == 1 && ver_cmp("1.2.3", "1.2.3") == 0 && ver_cmp("0.9.9", "1.0.0") == -1, "version comparison is numeric", ref ~failed)
+    check(ver_cmp("1.10.0", "1.9.9") == 1 && ver_cmp("1.2.3", "1.2.3") == 0 && ver_cmp("0.9.9", "1.0.0") < 0, "version comparison is numeric", ref ~failed)
     check(edit_distance("instal", "install") == 1 && edit_distance("abc", "abc") == 0, "edit distance", ref ~failed)
     check(checksum_ok_format("blake3:" + blake3_str("x")) && !checksum_ok_format("blake3:xyz") && !checksum_ok_format("sha256:" + blake3_str("x")), "checksum format", ref ~failed)
 
@@ -95,14 +94,14 @@ public fun cmd_selftest() {
     check(eq(json_stringify(json_parse(once)), once), "json parse and stringify are stable", ref ~failed)
 
     // файлы и хеш файла
-    set dir = path_join(dir_temp(), "yuki-selftest-" + cast(now_ms(), "string"))
+    set dir = join2(dir_temp(), "yuki-selftest-" + cast(now_ms(), "string"))
     dir_create_all(dir)
-    set f = path_join(dir, "a.txt")
+    set f = join2(dir, "a.txt")
     file_write_text(f, "yuki")
     check(file_exists(f) && eq(file_read_text(f), "yuki") && eq(blake3_file(f), blake3_str("yuki")), "file write, read and blake3_file agree with blake3_str", ref ~failed)
 
     // потоки: spawn/join работает и поток видит окружение
-    set tf = path_join(dir, "thread.txt")
+    set tf = join2(dir, "thread.txt")
     set_env_local(tf)
     set h = spawn(cast(selftest_thread, "ptr<void>"), cast(7, "ptr<void>"))
     join(h)

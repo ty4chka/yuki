@@ -4,11 +4,10 @@
 
 load core.panic: panic
 load std.fs.files: file_exists, file_remove, file_rename, file_size
-load std.fs.paths: path_join
 load std.hash.blake3: blake3_file
 load std.stdotool.format: format_bytes
 load std.strings: slice, lower
-load .util: ends_with
+load .util: ends_with, join2
 load .errors: YukiError, err
 load .config: cache_dir, ensure_dirs, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, MAX_DOWNLOAD
 load .fetch: download, check_url
@@ -61,13 +60,13 @@ public fun fetch_verified(url: string, checksum: string, label: string, prog_pat
 
     set hex = lower(slice(checksum, 7, 71))
     set ext = archive_ext(url)
-    set final_path = path_join(cache_dir(), hex + ext)
+    set final_path = join2(cache_dir(), hex + ext)
 
     if cache_hit(final_path, checksum) {
         return Fetched { path: final_path, bytes: file_size(final_path), cached: true }
     }
 
-    set part = path_join(cache_dir(), hex + ".part" + ext)
+    set part = join2(cache_dir(), hex + ".part" + ext)
     if file_exists(part) {
         file_remove(part)
     }
@@ -94,7 +93,7 @@ public fun fetch_unpinned(url: string) -> string {
     check_url(url)
     ensure_dirs()
     set ext = archive_ext(url)
-    set tmp = path_join(cache_dir(), "publish.part" + ext)
+    set tmp = join2(cache_dir(), "publish.part" + ext)
     if file_exists(tmp) {
         file_remove(tmp)
     }
@@ -110,6 +109,6 @@ public fun fetch_unpinned(url: string) -> string {
         file_remove(tmp)
         panic(err("verification failed: " + errkind, 412, tmp))
     }
-    file_rename(tmp, path_join(cache_dir(), hex + ext))
+    file_rename(tmp, join2(cache_dir(), hex + ext))
     return "blake3:" + hex
 }

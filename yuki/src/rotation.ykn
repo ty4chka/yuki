@@ -14,14 +14,13 @@ load core.panic: panic
 load std.json: json_parse
 load std.fs.files: file_read_text
 load std.strings: lines, split, trim, eq, lower
-load std.fs.paths: path_join
 load .errors: YukiError, err
 load .stage: stage_create, run_child, stage_remove
 load .view: InstallView
 load .trust: trusted_keys, threshold, revoke_key, trust_add, fingerprint
 load .verify: verify_text
 load .index: seen_get, seen_set
-load .util: now_secs, is_hex, valid_name
+load .util: now_secs, is_hex, valid_name, join2
 load .priv: is_root
 load .ui: ok, info, warn, step, c_accent, c_dim
 
@@ -44,8 +43,8 @@ public fun cmd_keys_refresh() {
         set quiet = init InstallView("", false)
         set nomap: int64[] = []
         run_child(stage, "keys", ref ~quiet, ref nomap)
-        set text = file_read_text(path_join(path_join(stage, "dl"), "rotation.json"))
-        set sigs = lines(file_read_text(path_join(path_join(stage, "dl"), "rotation.sigs")))
+        set text = file_read_text(join2(join2(stage, "dl"), "rotation.json"))
+        set sigs = lines(file_read_text(join2(join2(stage, "dl"), "rotation.sigs")))
 
         step(2, 3, "checking signatures as root")
         set keys = trusted_keys()
