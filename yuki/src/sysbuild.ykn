@@ -150,7 +150,7 @@ fun run_build(workdir: string, argv: string[], net: bool, policy: string) {
         }
         set st = command_new("timeout").args(cmd).env_clear().env("PATH", "/usr/local/bin:/usr/bin:/bin").status()
         if !st.success {
-            panic(err("build failed (exit " + rt::cast(st.code, "string") + ")", 743, workdir))
+            panic(err("build failed (exit " + cast(st.code, "string") + ")", 743, workdir))
         }
         return
     }
@@ -159,7 +159,7 @@ fun run_build(workdir: string, argv: string[], net: bool, policy: string) {
     }
     set st = command_new("timeout").args(cmd).env_clear().env("PATH", "/usr/local/bin:/usr/bin:/bin:" + tdir).env("HOME", workdir).current_dir(workdir).status()
     if !st.success {
-        panic(err("build failed (exit " + rt::cast(st.code, "string") + ")", 743, workdir))
+        panic(err("build failed (exit " + cast(st.code, "string") + ")", 743, workdir))
     }
 }
 

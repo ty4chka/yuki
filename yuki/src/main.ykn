@@ -70,7 +70,7 @@ fun usage() {
 }
 
 fun code_str(n: int32) -> string {
-    set s = rt::cast(n, "string")
+    set s = cast(n, "string")
     for i in 0..(4 - s.len()) {
         rewrite s = "0" + s
     }
@@ -396,11 +396,11 @@ fun dispatch(ref argv: string[]) {
         }
         diag_error("Y0001", "unknown command: " + cmd, "", tip)
     }
-    rt::exit(2)
+    exit(2)
 }
 
 fun main() {
-    set raw = rt::args()
+    set raw = args()
     set translated: string[] = []
     if raw.len() > 0 && starts_with(raw[0], "-") && !starts_with(raw[0], "--") && !eq(raw[0], "-y") {
         rewrite translated = translate(ref raw)
@@ -416,7 +416,7 @@ fun main() {
     theme_init()
     if argv.len() == 0 {
         usage()
-        rt::exit(0)
+        exit(0)
     }
 
     set tw = theme_warning()
@@ -428,16 +428,16 @@ fun main() {
         dispatch(ref argv)
     } catch e: VerifyError {
         set code: int32 = 300 + e.code
-        diag_error(code_str(code), e.message, e.path, hint_line(rt::cast(code, "int64")))
-        rt::exit(1)
+        diag_error(code_str(code), e.message, e.path, hint_line(cast(code, "int64")))
+        exit(1)
     } catch e: YukiError {
-        diag_error(code_str(e.code), e.message, e.path, hint_line(rt::cast(e.code, "int64")))
-        rt::exit(1)
+        diag_error(code_str(e.code), e.message, e.path, hint_line(cast(e.code, "int64")))
+        exit(1)
     } catch e: TarError {
         diag_error("Y0400", e.message, "", "the archive is damaged or in an unsupported format")
-        rt::exit(1)
+        exit(1)
     } catch {
         diag_error("Y0999", "unexpected failure: " + errkind, "", "run `yuki doctor`")
-        rt::exit(1)
+        exit(1)
     }
 }

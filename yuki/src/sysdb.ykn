@@ -87,7 +87,7 @@ public fun db_write(rec: PkgRecord, ref files: string[]) {
         "signer=" + rec.signer,
         "origin=" + rec.origin,
         "deps=" + rec.deps,
-        "installed_at=" + rt::cast(rec.installed_at, "string"),
+        "installed_at=" + cast(rec.installed_at, "string"),
         "reason=" + rec.reason,
         "summary=" + rec.summary
     ]
