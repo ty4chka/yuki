@@ -8,6 +8,8 @@
 //   4. root копирует артефакты к себе, заново проверяет blake3 и аудит, распаковывает в свой каталог
 //   5. root применяет транзакцию с журналом и откатом
 
+load core.utils: cast
+load core.panic: panic
 load std.io: print, println, read_line
 load std.env: get_or, set_env
 load std.fs.files: file_exists, file_read_text, file_write_text, file_copy, file_metadata
@@ -31,9 +33,9 @@ load .pipeline: archive_ext
 load .verify: VerifyError, check_blake3, audit_tar
 load .apply: ApplyItem, apply_transaction, remove_package, rollback_locked, check_package
 load .sysdb: PkgRecord, is_held, is_explicit, mark_explicit, orphans, dependents_of, db_names, db_read, db_has, db_files, owner_of, f_kind, f_path, history_add
-load .util: now_ms, valid_name, valid_version, dep_name, starts_with, ends_with
+load .util: now_ms, valid_name, valid_version, dep_name, starts_with, ends_with, join2
 
-fun need_root() {
+fun sys_need_root() {
     if !is_root() {
         panic(err("changing the system needs root: run `sudo yuki ...`", 750, ""))
     }
@@ -378,7 +380,7 @@ fun check_spec(spec: string) {
 
 // install a b c: один план и одна транзакция.
 public fun cmd_sys_install_many(ref specs: string[]) {
-    need_root()
+    sys_need_root()
     for i in 0..specs.len() {
         check_spec(specs[i])
     }
@@ -406,7 +408,7 @@ fun remove_unneeded(deps_csv: string) {
 }
 
 public fun cmd_sys_uninstall(name: string, force: bool) {
-    need_root()
+    sys_need_root()
     set rec = db_read(name)
     println("")
     println("  " + c_accent("::") + " Remove " + c_bold(rec.name) + " " + c_good(rec.version) + " (" + cast(db_files(name).len(), "string") + " files)")
@@ -432,7 +434,7 @@ public fun cmd_sys_uninstall(name: string, force: bool) {
 
 // Убрать все осиротевшие зависимости.
 public fun cmd_sys_autoremove() {
-    need_root()
+    sys_need_root()
     set orph = orphans()
     if orph.len() == 0 {
         ok("no orphaned dependencies")
@@ -471,7 +473,7 @@ fun peek_version(name: string, want: string) -> string {
     set found = ""
     sus {
         run_child(stage, "plan", ref ~quiet, ref nomap)
-        set nodes = plan_nodes(path_join(stage, "dl"), ref roots, false, false)
+        set nodes = plan_nodes(join2(stage, "dl"), ref roots, false, false)
         rewrite found = nodes[0].rel.version
     } catch e: YukiError {
         stage_remove(stage)
@@ -489,7 +491,7 @@ fun peek_version(name: string, want: string) -> string {
 
 // upgrade: один общий план и ОДНА транзакция для всех обновляемых пакетов.
 public fun cmd_sys_upgrade(only: string) {
-    need_root()
+    sys_need_root()
     set names = db_names()
     set todo: string[] = []
     set news: string[] = []
@@ -600,7 +602,7 @@ public fun cmd_sys_check(only: string) {
 
 // Сверка установленного с подписанным индексом: снятые (yanked) и пропавшие релизы.
 public fun cmd_sys_audit() {
-    need_root()
+    sys_need_root()
     set names = db_names()
     set problems: int64 = 0
     for i in 0..names.len() {
@@ -634,7 +636,7 @@ public fun cmd_sys_history() {
 
 // Откат последней незакрытой транзакции (или указанной).
 public fun cmd_sys_rollback(txid: string) {
-    need_root()
+    sys_need_root()
     set target = txid
     if target.len() == 0 {
         set base = path_join(state_dir(), "tx")
@@ -645,7 +647,7 @@ public fun cmd_sys_rollback(txid: string) {
                 for i in 0..all.len() {
                     set id = path_file_name(all[i])
                     set n: int64 = parse_int(id) ?? 0
-                    if n > best && file_exists(path_join(all[i], "COMMITTED")) && !file_exists(path_join(all[i], "ROLLED_BACK")) {
+                    if n > best && file_exists(join2(all[i], "COMMITTED")) && !file_exists(join2(all[i], "ROLLED_BACK")) {
                         rewrite best = n
                     }
                 }

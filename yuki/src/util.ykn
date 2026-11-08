@@ -4,7 +4,8 @@ load std.datetime: now_utc, to_unix_secs, to_unix_millis
 load std.strings: split, parse_int, slice, contains, eq
 // В актуальном std эти функции возвращают T? (bool?/int64?), а проект работает
 // с обычными bool/int64. Обёртки дают прежнюю семантику: null → false / -1.
-load std.strings: starts_with, ends_with, index_of as raw_starts_with, raw_ends_with, raw_index_of
+load std.strings: starts_with, ends_with, index_of, index_of_from as raw_starts_with, raw_ends_with, raw_index_of, raw_index_of_from
+load std.fs.paths: path_join
 
 public fun starts_with(s: string, prefix: string) -> bool {
     set r: bool? = raw_starts_with(s, prefix)
@@ -14,6 +15,17 @@ public fun starts_with(s: string, prefix: string) -> bool {
 public fun ends_with(s: string, suffix: string) -> bool {
     set r: bool? = raw_ends_with(s, suffix)
     return r ?? false
+}
+
+// индекс первого вхождения начиная с from_idx или -1
+public fun index_of_from(s: string, sub: string, from_idx: int64) -> int64 {
+    set r: int64? = raw_index_of_from(s, sub, from_idx)
+    return r ?? -1
+}
+
+// path_join из std вариадический; на двух аргументах он иногда не проходит проверку типов
+public fun join2(a: string, b: string) -> string {
+    return path_join(a, b)
 }
 
 // индекс первого вхождения или -1

@@ -11,6 +11,8 @@
 // kind "cache" — проектный режим: fetch_verified (кэш, хеш, аудит).
 // kind "file"  — системный режим: скачать в dest и сверить blake3 (аудит делает root).
 
+load core.utils: cast
+load core.panic: panic
 load std.threads: spawn, join, is_finished, sleep, hardware_concurrency
 load std.env: get_or, set_env
 load std.fs.files: file_exists, file_read_text, file_write_text

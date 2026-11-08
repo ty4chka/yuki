@@ -13,6 +13,7 @@
 // Когда анимация выключена (CI, пайп, TERM=dumb, тема), панель не рисуется:
 // остаются обычные строки «✔ …» и итоговое дерево в конце.
 
+load core.utils: cast
 load std.stdotool.live_area: LiveArea
 load std.io: println
 load std.strings: pad_end

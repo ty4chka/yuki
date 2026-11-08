@@ -2,6 +2,8 @@
 // tree/rdeps/related/graph/why, doctor, config, clean, hold, export/import,
 // explain, completions, help, pack.
 
+load core.utils: cast
+load core.panic: panic
 load std.io: print, println
 load std.env: get_or
 load std.json: json_parse
@@ -32,7 +34,7 @@ load .index: seen_get, seen_set
 load .fetch: http_text
 load .explain: explain_lines
 load .cmdlist: help_lines, suggest, completion_script
-load .util: now_secs, valid_name, valid_version, ver_cmp, starts_with, index_of
+load .util: now_secs, valid_name, valid_version, ver_cmp, starts_with, index_of, join2
 
 fun yn(b: bool) -> string {
     if b {
@@ -41,13 +43,13 @@ fun yn(b: bool) -> string {
     return "no"
 }
 
-fun need_root() {
+fun tools_need_root() {
     if !is_root() {
         panic(err("this changes the system: run it with sudo", 750, ""))
     }
 }
 
-fun in_list(ref l: string[], x: string) -> bool {
+fun tools_in_list(ref l: string[], x: string) -> bool {
     for i in 0..l.len() {
         if eq(l[i], x) {
             return true
@@ -71,7 +73,7 @@ fun plan_for(name: string, want: string) -> PNode[] {
     set nodes: PNode[] = []
     sus {
         run_child(stage, "plan", ref ~quiet, ref nomap)
-        rewrite nodes = plan_nodes(path_join(stage, "dl"), ref roots, false, false)
+        rewrite nodes = plan_nodes(join2(stage, "dl"), ref roots, false, false)
     } catch e: YukiError {
         stage_remove(stage)
         panic(e)
@@ -157,7 +159,7 @@ fun verified_catalog() -> string {
         set quiet = init InstallView("", false)
         set nomap: int64[] = []
         run_child(stage, "catalog", ref ~quiet, ref nomap)
-        set dl = path_join(stage, "dl")
+        set dl = join2(stage, "dl")
         rewrite text = file_read_text(path_join(dl, "catalog.json"))
         set sig = trim(file_read_text(path_join(dl, "catalog.json.sig")))
         set keys = trusted_keys()
@@ -297,7 +299,7 @@ fun print_branch(name: string, prefix: string, depth: int64, up: bool, ref ~seen
             rewrite glyph = sym("last")
             rewrite pad = "   "
         }
-        set again = in_list(ref seen, kids[i])
+        set again = tools_in_list(ref seen, kids[i])
         set tail = ""
         if again {
             rewrite tail = c_dim("  (shown above)")
@@ -536,7 +538,7 @@ public fun cmd_hold(name: string) {
         }
         return
     }
-    need_root()
+    tools_need_root()
     need_installed(name)
     if is_held(name) {
         info(name + " is already held")
@@ -550,7 +552,7 @@ public fun cmd_hold(name: string) {
 }
 
 public fun cmd_unhold(name: string) {
-    need_root()
+    tools_need_root()
     set h = held_names()
     set out: string[] = []
     set found = false
@@ -579,7 +581,7 @@ public fun cmd_export() {
 }
 
 public fun cmd_import(file: string) {
-    need_root()
+    tools_need_root()
     if !file_exists(file) {
         panic(err("file not found: " + file, 501, file))
     }
@@ -652,7 +654,7 @@ public fun cmd_completions(shell: string) {
 
 // ── сборка пакета ───────────────────────────────────────────────────────
 
-fun strip_root(p: string, root: string) -> string {
+fun tools_strip_root(p: string, root: string) -> string {
     if starts_with(p, root + "/") {
         return slice(p, root.len() + 1, p.len())
     }
@@ -671,7 +673,7 @@ public fun cmd_pack(name: string, dir: string, out: string) {
     set problems: int64 = 0
     set count: int64 = 0
     for i in 0..all.len() {
-        set rel = strip_root(all[i], dir)
+        set rel = tools_strip_root(all[i], dir)
         if rel.len() == 0 {
             continue
         }

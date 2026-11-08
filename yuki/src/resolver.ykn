@@ -2,6 +2,7 @@
 // Версии в индексе закреплены точно ("имя@1.2.3"), поэтому результат
 // детерминирован: SAT-решатель не нужен, только обход и проверка конфликтов.
 
+load core.panic: panic
 load std.strings: eq
 load .errors: YukiError, err
 load .index: Release, resolve
@@ -20,7 +21,7 @@ public struct Node {
 static MAX_DEPTH: int32 = 16
 static MAX_NODES: int64 = 256
 
-fun visit(name: string, want: string, parent: int64, depth: int32, ref ~out: Node[], ref ~view: InstallView) {
+fun resolve_visit(name: string, want: string, parent: int64, depth: int32, ref ~out: Node[], ref ~view: InstallView) {
     if depth > MAX_DEPTH {
         panic(err("dependency chain is too deep", 215, name))
     }
@@ -50,13 +51,13 @@ fun visit(name: string, want: string, parent: int64, depth: int32, ref ~out: Nod
     view.draw(true)
 
     for k in 0..rel.deps.len() {
-        visit(dep_name(rel.deps[k]), dep_version(rel.deps[k]), idx, depth + 1, ref ~out, ref ~view)
+        resolve_visit(dep_name(rel.deps[k]), dep_version(rel.deps[k]), idx, depth + 1, ref ~out, ref ~view)
     }
 }
 
 // Корень первым, дальше в порядке обхода в глубину. Дерево растёт на панели по мере находок.
 public fun resolve_tree(name: string, want: string, ref ~view: InstallView) -> Node[] {
     set out: Node[] = []
-    visit(name, want, -1, 0, ref ~out, ref ~view)
+    resolve_visit(name, want, -1, 0, ref ~out, ref ~view)
     return out
 }

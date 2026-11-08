@@ -8,6 +8,8 @@
 // результат сборки обязан ему соответствовать (воспроизводимость проверяется, а не предполагается).
 // Таймаут 30 минут, затем kill.
 
+load core.utils: cast
+load core.panic: panic
 load std.process: command_new, run
 load std.fs.files: file_exists, file_read_text, file_write_text, file_copy, file_metadata
 load std.fs.dirs: dir_create_all, dir_list

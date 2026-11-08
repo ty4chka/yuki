@@ -1,6 +1,7 @@
 // ui.ykn — весь вывод yuki. Цвета и символы берутся из темы (theme.ykn),
 // поэтому здесь нет ни одного жёстко заданного цвета или глифа.
 
+load core.utils: cast
 load std.io: println, eprintln
 load std.outf: style, visible_len
 load std.stdotool.format: format_bytes, format_percent

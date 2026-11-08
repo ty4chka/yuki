@@ -6,6 +6,8 @@
 // chunked, тело разбирается (раньше это было ограничением).
 // Прогресс пишется в маленький файл prog_path: его читает рисующий поток/процесс.
 
+load core.utils: cast
+load core.panic: panic
 load std.net: tcp_connect, tls_connect, TlsStream
 load std.strings: split, trim, lower, slice, contains, eq, parse_int
 load std.fs.files: File, open_write, file_remove, file_write_text

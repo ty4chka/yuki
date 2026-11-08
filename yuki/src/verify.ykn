@@ -3,6 +3,8 @@
 //   2. Ed25519-подпись с доменным разделителем
 //   3. Аудит tar-архива ДО распаковки: пути, ссылки, setuid, лимиты размера
 
+load core.utils: cast
+load core.panic: panic
 load std.strings: split, contains, eq, lower, slice, trim
 load std.hash: hex_to_bytes, constant_time_eq_str
 load std.hash.blake3: blake3_file

@@ -9,6 +9,8 @@
 // клиент уже доверяет. Новый ключ сам себя ввести не может. Отозванный ключ попадает
 // в revoked_keys и больше не доверяется, даже если его вернут в trusted_keys.
 
+load core.utils: cast
+load core.panic: panic
 load std.json: json_parse
 load std.fs.files: file_read_text
 load std.strings: lines, split, trim, eq, lower
@@ -23,7 +25,7 @@ load .util: now_secs, is_hex, valid_name
 load .priv: is_root
 load .ui: ok, info, warn, step, c_accent, c_dim
 
-fun in_list(ref l: string[], x: string) -> bool {
+fun rot_in_list(ref l: string[], x: string) -> bool {
     for i in 0..l.len() {
         if eq(l[i], x) {
             return true
@@ -50,7 +52,7 @@ public fun cmd_keys_refresh() {
         set counted: string[] = []
         for i in 0..sigs.len() {
             set p = split(trim(sigs[i]), " ")
-            if p.len() == 2 && in_list(ref keys, lower(p[0])) && !in_list(ref counted, lower(p[0])) {
+            if p.len() == 2 && rot_in_list(ref keys, lower(p[0])) && !rot_in_list(ref counted, lower(p[0])) {
                 if verify_text(lower(p[0]), text, p[1]) {
                     counted.push(lower(p[0]))
                 }

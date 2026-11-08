@@ -5,6 +5,7 @@
 // Дереву зависимостей root верит только после собственной проверки подписей.
 // Корней может быть несколько: `install a b c` и `upgrade` строят один общий план.
 
+load core.panic: panic
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all
 load std.fs.paths: path_join, path_parent
@@ -77,7 +78,7 @@ fun load_entry(dl: string, name: string, fetch_missing: bool) -> EntryText {
     return e
 }
 
-fun visit(dl: string, name: string, want: string, parent: int64, depth: int32, fetch_missing: bool, record: bool, ref ~out: PNode[]) {
+fun plan_visit(dl: string, name: string, want: string, parent: int64, depth: int32, fetch_missing: bool, record: bool, ref ~out: PNode[]) {
     if depth > MAX_DEPTH {
         panic(err("dependency chain is too deep", 215, name))
     }
@@ -112,7 +113,7 @@ fun visit(dl: string, name: string, want: string, parent: int64, depth: int32, f
     out.push(PNode { rel: rel, parent: parent, action: action })
     for k in 0..out[idx].rel.deps.len() {
         set spec = out[idx].rel.deps[k]
-        visit(dl, dep_name(spec), dep_version(spec), idx, depth + 1, fetch_missing, record, ref ~out)
+        plan_visit(dl, dep_name(spec), dep_version(spec), idx, depth + 1, fetch_missing, record, ref ~out)
     }
 }
 
@@ -120,7 +121,7 @@ fun visit(dl: string, name: string, want: string, parent: int64, depth: int32, f
 public fun plan_nodes(dl: string, ref roots: string[], fetch_missing: bool, record: bool) -> PNode[] {
     set out: PNode[] = []
     for i in 0..roots.len() {
-        visit(dl, spec_name(roots[i]), spec_ver(roots[i]), -1, 0, fetch_missing, record, ref ~out)
+        plan_visit(dl, spec_name(roots[i]), spec_ver(roots[i]), -1, 0, fetch_missing, record, ref ~out)
     }
     return out
 }

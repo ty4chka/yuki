@@ -1,5 +1,6 @@
 // config.ykn — пути, адрес индекса, allow-list хостов, лимиты.
 
+load core.panic: panic
 load std.fs.defaults: dir_app_config, dir_app_cache, dir_app_data
 load std.fs.dirs: dir_create_all
 load std.fs.files: file_exists, file_read_text

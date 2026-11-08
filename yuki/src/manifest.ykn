@@ -3,9 +3,10 @@
 //   name = { link = "https://…/x.tar.gz", checksum = "blake3:…" } # yuki:1.2.0
 // yukino сам скачает и сверит checksum; хвост "# yuki:<версия>" читает только yuki.
 
+load core.panic: panic
 load std.fs.files: file_exists, file_read_text, file_write_text, file_rename
-load std.strings: lines, trim, index_of_from, slice, eq, str_join, split
-load .util: starts_with, index_of
+load std.strings: lines, trim, slice, eq, str_join, split
+load .util: starts_with, index_of, index_of_from
 load .errors: YukiError, err
 
 static MANIFEST: string = "yuki.toml"

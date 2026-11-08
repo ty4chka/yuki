@@ -2,6 +2,8 @@
 //   <config>/trusted_keys   строки "<имя> <ed25519 pubkey hex>"
 //   <config>/keys/<имя>.seed  приватный seed (каталог 0700, файл 0600)
 
+load core.utils: cast
+load core.panic: panic
 load std.io: print, println, read_line
 load std.fs.dirs: dir_create_all
 load std.fs.files: file_exists, file_read_text, file_write_text, file_append_text, file_set_permissions

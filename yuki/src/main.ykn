@@ -1,5 +1,8 @@
 // main.ykn — точка входа yuki: флаги в стиле pacman, диспетчер команд, единая обработка ошибок.
 
+load core.utils: cast
+load core.panic: panic
+load core.process: exit, args
 load std.io: println
 load std.strings: eq, slice, str_join, parse_int
 load .util: starts_with

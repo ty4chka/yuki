@@ -5,6 +5,9 @@
 // root вернуть нельзя → no_new_privs (setuid-бинарники больше не повышают права).
 // Root-часть ничему из того, что принёс ребёнок, не верит и всё проверяет заново.
 
+load core.panic: panic
+load core.process: exit
+load core.mem: ptr_of
 load std.os.unix: fork, waitpid, kill, geteuid
 load .errors: YukiError, err
 

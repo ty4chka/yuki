@@ -4,6 +4,8 @@
 //   <state>/db/<имя>/files   "<blake3> <mode> <f|d> <путь>" по строке на объект пакета
 //   <state>/history          журнал транзакций (только дописывается)
 
+load core.utils: cast
+load core.panic: panic
 load std.fs.files: file_exists, file_read_text, file_write_text, file_append_text
 load std.fs.dirs: dir_create_all, dir_exists, dir_list, dir_remove_all
 load std.fs.paths: path_join, path_file_name

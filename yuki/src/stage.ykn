@@ -9,6 +9,9 @@
 // Пока ребёнок работает, родитель не блокируется: он опрашивает файлы прогресса и
 // рисует панель (анимация не замирает).
 
+load core.utils: cast
+load core.panic: panic
+load core.process: exit
 load std.os.unix: fork, waitpid, chmod, chown
 load std.threads: sleep
 load std.fs.files: file_exists, file_read_text, file_write_text

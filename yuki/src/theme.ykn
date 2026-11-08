@@ -16,6 +16,7 @@
 // В Yukino нет изменяемых глобальных переменных, поэтому готовая тема хранится в
 // переменных окружения процесса (YUKI_T_*, YUKI_S_*): theme_init() кладёт их один раз.
 
+load core.utils: cast
 load std.io: is_stdout_terminal
 load std.env: get_or, set_env, has_env
 load std.outf: Styled, style, supports_truecolor
@@ -211,7 +212,7 @@ public fun spinner_frames() -> string[] {
 
 // ── раскраска ───────────────────────────────────────────────────────────
 
-fun hexval(ch: string) -> int32 {
+fun theme_hexval(ch: string) -> int32 {
     set i = index_of("0123456789abcdef", lower(ch))
     if i < 0 {
         return 0
@@ -220,7 +221,7 @@ fun hexval(ch: string) -> int32 {
 }
 
 fun hex2(s: string, at: int64) -> int32 {
-    return hexval(slice(s, at, at + 1)) * 16 + hexval(slice(s, at + 1, at + 2))
+    return theme_hexval(slice(s, at, at + 1)) * 16 + theme_hexval(slice(s, at + 1, at + 2))
 }
 
 fun to_cube(v: int32) -> int32 {

@@ -17,6 +17,8 @@
 //
 // Клиент берёт только нужную запись по HTTPS (sparse), клонировать индекс не нужно.
 
+load core.utils: cast
+load core.panic: panic
 load std.json: JsonValue, json_parse, json_stringify
 load std.outf: strip_ansi
 load std.strings: eq, trim, lines, split, slice, str_join, pad_end, parse_int, contains, starts_with, lower

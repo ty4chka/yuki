@@ -2,6 +2,7 @@
 // Кэш содержимо-адресуемый: <cache>/<blake3-hex><расширение>. Каждый файл
 // проходит проверку при каждом использовании, так что подмена кэша не страшна.
 
+load core.panic: panic
 load std.fs.files: file_exists, file_remove, file_rename, file_size
 load std.fs.paths: path_join
 load std.hash.blake3: blake3_file
@@ -97,7 +98,7 @@ public fun fetch_unpinned(url: string) -> string {
     if file_exists(tmp) {
         file_remove(tmp)
     }
-    download(url, tmp, MAX_DOWNLOAD, "")
+    set got_bytes: int64 = download(url, tmp, MAX_DOWNLOAD, "")
     set hex = ""
     sus {
         audit_tar(tmp, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, false)

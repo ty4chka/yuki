@@ -17,6 +17,8 @@
 // }
 // Для kind = "lib": вместо bin/src указывается "url" архива. Поле "checksum" можно не писать.
 
+load core.utils: cast
+load core.panic: panic
 load std.io: println
 load std.json: JsonValue, json_parse, json_object, json_array, json_string, json_int, json_bool, json_pretty, json_validate, json_stringify
 load std.fs.files: file_exists, file_read_text, file_write_text

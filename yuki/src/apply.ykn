@@ -8,6 +8,8 @@
 // Журнал пишется до любых изменений (A), поэтому после сбоя питания незавершённая транзакция
 // откатывается автоматически при следующем запуске. Блокировка: каталог <state>/lock (mkdir атомарен).
 
+load core.utils: cast
+load core.panic: panic
 load std.os.unix: chmod, chown, kill, getpid
 load std.fs.files: file_exists, file_copy, file_rename, file_remove, file_metadata, file_append_text, file_read_text, file_write_text, file_symlink
 load std.fs.dirs: dir_create, dir_create_all, dir_exists, dir_walk, dir_list, dir_remove, dir_remove_all, dir_is_empty, dir_copy_all
@@ -160,7 +162,7 @@ fun recover_interrupted() {
 
 // ── сканирование пакета ─────────────────────────────────────────────────
 
-fun strip_root(p: string, root: string) -> string {
+fun apply_strip_root(p: string, root: string) -> string {
     if starts_with(p, root + "/") {
         return slice(p, root.len() + 1, p.len())
     }
@@ -186,7 +188,7 @@ fun scan_package(pkg: string, root: string, ref items: ApplyItem[], n: int64) ->
     set zero: uint32 = 0
     set all = dir_walk(root)
     for i in 0..all.len() {
-        set rel = strip_root(all[i], root)
+        set rel = apply_strip_root(all[i], root)
         if rel.len() == 0 {
             continue
         }
@@ -228,7 +230,7 @@ fun old_line_of(ref old: string[], rel: string) -> string {
     return ""
 }
 
-fun in_list(ref fl: string[], rel: string) -> bool {
+fun apply_in_list(ref fl: string[], rel: string) -> bool {
     for i in 0..fl.len() {
         if eq(f_path(fl[i]), rel) {
             return true
@@ -327,7 +329,7 @@ fun commit_item(txid: string, ref items: ApplyItem[], n: int64, overwrite: bool)
     for i in 0..old.len() {
         if !eq(f_kind(old[i]), "d") {
             set rel = f_path(old[i])
-            if !in_list(ref fl, rel) && exists_any("/" + rel) {
+            if !apply_in_list(ref fl, rel) && exists_any("/" + rel) {
                 if is_config(rel) && eq(f_kind(old[i]), "f") && !eq(blake3_file("/" + rel), f_hash(old[i])) {
                     continue
                 }

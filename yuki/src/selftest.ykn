@@ -2,6 +2,8 @@
 // Запускать сразу после первой сборки: хеши, подписи, потоки, политика путей, JSON, файлы.
 // Сети не нужно, ничего вне временного каталога не трогается.
 
+load core.utils: cast
+load core.panic: panic
 load std.env: get_or, set_env
 load std.threads: spawn, join, sleep
 load std.json: json_parse, json_stringify

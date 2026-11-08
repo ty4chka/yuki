@@ -1,5 +1,7 @@
 // cmds.ykn — команды yuki.
 
+load core.utils: cast
+load core.panic: panic
 load std.io: println
 load std.json: JsonValue, json_parse, json_object, json_array, json_string, json_int, json_bool, json_pretty
 load std.fs.paths: path_join
