@@ -34,7 +34,7 @@ fun in_list(ref l: string[], x: string) -> bool {
 
 public fun cmd_keys_refresh() {
     if !is_root() {
-        panic(err("changing trusted keys needs root: run `sudo yuki keys refresh`", 750, ""))
+        rt::panic(err("changing trusted keys needs root: run `sudo yuki keys refresh`", 750, ""))
     }
     step(1, 3, "fetching the key rotation file (unprivileged)")
     set stage = stage_create()
@@ -58,16 +58,16 @@ public fun cmd_keys_refresh() {
         }
         set need = threshold()
         if counted.len() < need {
-            panic(err("rotation is signed by " + cast(counted.len(), "string") + " trusted key(s), " + cast(need, "string") + " required", 760, "rotation.json"))
+            rt::panic(err("rotation is signed by " + rt::cast(counted.len(), "string") + " trusted key(s), " + rt::cast(need, "string") + " required", 760, "rotation.json"))
         }
 
         set doc = json_parse(text)
         set seq = doc.get("seq").as_int()
         if doc.get("expires").as_int() < now_secs() {
-            panic(err("rotation file has expired", 761, "rotation.json"))
+            rt::panic(err("rotation file has expired", 761, "rotation.json"))
         }
         if seq < seen_get("__rotation__") {
-            panic(err("rotation file is older than one already applied", 762, "rotation.json"))
+            rt::panic(err("rotation file is older than one already applied", 762, "rotation.json"))
         }
 
         step(3, 3, "applying")
@@ -95,10 +95,10 @@ public fun cmd_keys_refresh() {
         seen_set("__rotation__", seq)
     } catch e: YukiError {
         stage_remove(stage)
-        panic(e)
+        rt::panic(e)
     } catch {
         stage_remove(stage)
-        panic(err("key refresh failed: " + errkind, 763, ""))
+        rt::panic(err("key refresh failed: " + errkind, 763, ""))
     }
     stage_remove(stage)
     ok("keys are up to date")

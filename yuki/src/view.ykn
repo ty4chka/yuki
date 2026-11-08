@@ -144,7 +144,7 @@ public class InstallView {
     fun node_state(i: int64) -> string {
         set st = this.states[i]
         if st == 1 {
-            return c_warn(this.spin()) + " " + render_bar(this.pcts[i], 100, 10) + " " + cast(this.pcts[i], "string") + "%"
+            return c_warn(this.spin()) + " " + render_bar(this.pcts[i], 100, 10) + " " + rt::cast(this.pcts[i], "string") + "%"
         }
         if st == 2 {
             return c_good(sym("ok")) + " " + c_dim("downloaded")
@@ -160,7 +160,7 @@ public class InstallView {
 
     fun active_note(p: int64) -> string {
         if p == 0 {
-            return c_dim("resolving " + cast(this.names.len(), "string") + " found")
+            return c_dim("resolving " + rt::cast(this.names.len(), "string") + " found")
         }
         if p == 1 {
             set sum: int64 = 0
@@ -175,7 +175,7 @@ public class InstallView {
             if this.activity.len() > 0 {
                 rewrite tail = c_warn(this.activity)
             }
-            return render_bar(sum, total, 20) + " " + cast(sum * 100 / total, "string") + "%  " + tail
+            return render_bar(sum, total, 20) + " " + rt::cast(sum * 100 / total, "string") + "%  " + tail
         }
         return c_dim("writing yuki.toml")
     }

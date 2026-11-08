@@ -27,15 +27,15 @@ load .view: InstallView
 load .util: now_ms
 
 fun p_job(dir: string, i: int64) -> string {
-    return path_join(dir, "job-" + cast(i, "string"))
+    return path_join(dir, "job-" + rt::cast(i, "string"))
 }
 
 fun p_prog(dir: string, i: int64) -> string {
-    return path_join(dir, "prog-" + cast(i, "string"))
+    return path_join(dir, "prog-" + rt::cast(i, "string"))
 }
 
 fun p_state(dir: string, i: int64) -> string {
-    return path_join(dir, "state-" + cast(i, "string"))
+    return path_join(dir, "state-" + rt::cast(i, "string"))
 }
 
 public fun pool_prepare(dir: string) {
@@ -57,26 +57,26 @@ fun run_job(dir: string, i: int64) {
     set prog = p_prog(dir, i)
     if eq(kind, "cache") {
         set got = fetch_verified(url, checksum, label, prog)
-        file_write_text(p_state(dir, i), "ok\n" + got.path + "\t" + cast(got.bytes, "string"))
+        file_write_text(p_state(dir, i), "ok\n" + got.path + "\t" + rt::cast(got.bytes, "string"))
     } else {
         dir_create_all(path_parent(dest))
         set size = download(url, dest, MAX_DOWNLOAD, prog)
         check_blake3(dest, checksum)
-        file_write_text(p_state(dir, i), "ok\n" + dest + "\t" + cast(size, "string"))
+        file_write_text(p_state(dir, i), "ok\n" + dest + "\t" + rt::cast(size, "string"))
     }
 }
 
 // Точка входа потока. arg = номер задачи + 1 (0 был бы null).
 #[thunk]
 fun pool_worker(arg: ptr<void>) {
-    set i: int64 = cast(arg, "int64") - 1
+    set i: int64 = rt::cast(arg, "int64") - 1
     set dir = get_or("YUKI_POOL_DIR", "")
     sus {
         run_job(dir, i)
     } catch e: YukiError {
-        file_write_text(p_state(dir, i), "err\n" + cast(e.code, "string") + "\n" + e.message)
+        file_write_text(p_state(dir, i), "err\n" + rt::cast(e.code, "string") + "\n" + e.message)
     } catch e: VerifyError {
-        file_write_text(p_state(dir, i), "err\n" + cast(300 + e.code, "string") + "\n" + e.message)
+        file_write_text(p_state(dir, i), "err\n" + rt::cast(300 + e.code, "string") + "\n" + e.message)
     } catch {
         file_write_text(p_state(dir, i), "err\n755\nworker failed: " + errkind)
     }
@@ -87,7 +87,7 @@ public fun jobs_limit() -> int64 {
     if env >= 1 && env <= 16 {
         return env
     }
-    set cores: int64 = cast(hardware_concurrency(), "int64")
+    set cores: int64 = rt::cast(hardware_concurrency(), "int64")
     if cores < 2 {
         return 2
     }
@@ -164,7 +164,7 @@ public fun pool_run(dir: string, count: int64, parallel: int64, ref nidx: int64[
     set t0 = now_ms()
     loop {
         while started < count && running < parallel {
-            rewrite handles[started] = spawn(cast(pool_worker, "ptr<void>"), cast(started + 1, "ptr<void>"))
+            handles[started] = spawn(rt::cast(pool_worker, "ptr<void>"), rt::cast(started + 1, "ptr<void>"))
             rewrite status[started] = 1
             if nidx[started] >= 0 {
                 view.set_state(nidx[started], 1)
@@ -233,10 +233,10 @@ public fun pool_raise(dir: string, count: int64, labels: string[]) {
             set code: int32 = 755
             set msg = "download failed"
             if l.len() >= 3 {
-                rewrite code = cast(parse_int(l[1]) ?? 755, "int32")
+                rewrite code = rt::cast(parse_int(l[1]) ?? 755, "int32")
                 rewrite msg = l[2]
             }
-            panic(err(msg, code, labels[i]))
+            rt::panic(err(msg, code, labels[i]))
         }
     }
 }

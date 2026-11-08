@@ -46,7 +46,7 @@ fun check(cond: bool, label: string, ref ~failed: int64) {
 fun selftest_thread(arg: ptr<void>) {
     set path = get_or("YUKI_SELFTEST_FILE", "")
     sus {
-        file_write_text(path, "thread-" + cast(cast(arg, "int64"), "string"))
+        file_write_text(path, "thread-" + rt::cast(rt::cast(arg, "int64"), "string"))
     } catch {
     }
 }
@@ -62,7 +62,7 @@ public fun cmd_selftest() {
     set seed: bytes = random_bytes(32)
     set pubk: bytes = ed25519_public_key(ref seed)
     set pub_hex = bytes_to_hex(ref pubk)
-    set msg: bytes = cast(signed_message("hello"), "bytes")
+    set msg: bytes = rt::cast(signed_message("hello"), "bytes")
     set sig: bytes = ed25519_sign(ref seed, ref msg)
     set sig_hex = bytes_to_hex(ref sig)
     check(pub_hex.len() == 64 && sig_hex.len() == 128, "ed25519 key and signature sizes (32 and 64 bytes)", ref ~failed)
@@ -93,7 +93,7 @@ public fun cmd_selftest() {
     check(eq(json_stringify(json_parse(once)), once), "json parse and stringify are stable", ref ~failed)
 
     // файлы и хеш файла
-    set dir = path_join(dir_temp(), "yuki-selftest-" + cast(now_ms(), "string"))
+    set dir = path_join(dir_temp(), "yuki-selftest-" + rt::cast(now_ms(), "string"))
     dir_create_all(dir)
     set f = path_join(dir, "a.txt")
     file_write_text(f, "yuki")
@@ -102,7 +102,7 @@ public fun cmd_selftest() {
     // потоки: spawn/join работает и поток видит окружение
     set tf = path_join(dir, "thread.txt")
     set_env_local(tf)
-    set h = spawn(cast(selftest_thread, "ptr<void>"), cast(7, "ptr<void>"))
+    set h = spawn(rt::cast(selftest_thread, "ptr<void>"), rt::cast(7, "ptr<void>"))
     join(h)
     check(file_exists(tf) && eq(file_read_text(tf), "thread-7"), "a worker thread starts, runs and joins", ref ~failed)
     dir_remove_all(dir)
@@ -111,7 +111,7 @@ public fun cmd_selftest() {
 
     println("")
     if failed > 0 {
-        panic(err(cast(failed, "string") + " self-test check(s) failed", 799, "selftest"))
+        rt::panic(err(rt::cast(failed, "string") + " self-test check(s) failed", 799, "selftest"))
     }
     ok("all checks passed " + c_dim("(this build can hash, sign, verify and run threads)"))
 }
