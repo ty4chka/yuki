@@ -96,7 +96,7 @@ public fun valid_version(v: string) -> bool {
 }
 
 // 1 если a > b, -1 если a < b, 0 если равны. Вызывать только после valid_version.
-public fun ver_cmp(a: string, b: string) -> int32 {
+public fun ver_cmp(a: string, b: string) -> int64 {
     set pa = split(a, ".")
     set pb = split(b, ".")
     for i in 0..3 {
@@ -106,7 +106,8 @@ public fun ver_cmp(a: string, b: string) -> int32 {
             return 1
         }
         if x < y {
-            return -1
+            set neg: int64 = 0 - 1
+            return neg
         }
     }
     return 0

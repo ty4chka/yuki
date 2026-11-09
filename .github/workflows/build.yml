@@ -55,6 +55,28 @@ jobs:
         run: |
           git clone --depth 1 https://github.com/yukitsuri/yukino "$RUNNER_TEMP/yukino"
           cd "$RUNNER_TEMP/yukino"
+          # Патч ABI на aarch64: рантайм (Rust) принимает указатель результата ОБЫЧНЫМ
+          # первым аргументом (x0), а кодоген объявлял его `sret` (на aarch64 это x8).
+          # Итог: args() и другие sret-хелперы писали по мусорному x0 -> SIGSEGV.
+          # На x86_64 sret-указатель случайно совпадает с первым аргументом (rdi).
+          python3 - <<'PY'
+          import re, sys
+          def patch(path, pats):
+              s = open(path, encoding="utf-8").read()
+              for pat in pats:
+                  s, n = re.subn(pat, "", s)
+                  if n == 0:
+                      sys.exit("патч не применился: %s в %s" % (pat, path))
+                  print("patched", path, pat, n)
+              open(path, "w", encoding="utf-8").write(s)
+          patch("crates/yukic-codegen/src/intrinsic.rs", [
+              r"[ \t]*f\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\n",
+              r"[ \t]*call\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\n",
+          ])
+          patch("crates/yukic-codegen/src/body/mod.rs", [
+              r"[ \t]*f\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\n",
+          ])
+          PY
           YUKINO_RELEASEBUILD=1 cargo build --release --bin yukic --bin yukino
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
