@@ -84,6 +84,12 @@ public fun cmd_selftest() {
     check(vc_b == 0, "version comparison: equal versions", ref ~failed)
     check(vc_c < 0, "version comparison: 0.9.9 is older than 1.0.0", ref ~failed)
     check(digits_val("1024") == 1024, "digits_val parses 1024", ref ~failed)
+    set dbg_x: int64 = digits_val("10")
+    set dbg_y: int64 = digits_val("9")
+    info("debug: digits_val(10)=" + cast(dbg_x, "string") + " digits_val(9)=" + cast(dbg_y, "string") + " vc_a=" + cast(vc_a, "string") + " vc_b=" + cast(vc_b, "string") + " vc_c=" + cast(vc_c, "string"))
+    set dbg_pa: string[] = split("1.10.0", ".")
+    set dbg_pb: string[] = split("1.9.9", ".")
+    info("debug: pa[1]=" + dbg_pa[1] + " pb[1]=" + dbg_pb[1] + " ver_cmp(2.0.0,1.0.0)=" + cast(ver_cmp("2.0.0", "1.0.0"), "string") + " ver_cmp(1.0.0,2.0.0)=" + cast(ver_cmp("1.0.0", "2.0.0"), "string"))
     set pi_a: int64 = parse_int("42") ?? 0
     check(pi_a == 42, "parse_int(42) with a default gives 42", ref ~failed)
     set pi_b: int64? = parse_int("10")
