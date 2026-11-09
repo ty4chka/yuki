@@ -10,7 +10,7 @@ load std.fs.files: file_exists, file_read_text, file_write_text, file_append_tex
 load std.fs.dirs: dir_create_all, dir_exists, dir_list, dir_remove_all
 load std.fs.paths: path_file_name
 load std.strings: lines, split, trim, eq, slice, str_join, parse_int
-load .util: index_of, join2
+load .util: str_index, join2
 load .errors: YukiError, err
 load .config: state_dir, config_dir
 
@@ -52,7 +52,7 @@ public fun db_names() -> string[] {
 
 fun kv_get(ls: string[], key: string) -> string {
     for i in 0..ls.len() {
-        set p = index_of(ls[i], "=")
+        set p = str_index(ls[i], "=")
         if p > 0 && eq(slice(ls[i], 0, p), key) {
             return slice(ls[i], p + 1, ls[i].len())
         }

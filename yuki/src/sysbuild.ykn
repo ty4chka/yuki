@@ -18,7 +18,7 @@ load std.fs.archives.tar: tar_unpack, tar_pack_dir
 load std.os.unix: chmod
 load std.env: get_or
 load std.strings: lines, split, eq, trim, slice, str_join
-load .util: starts_with, join2
+load .util: str_starts, join2
 load .errors: YukiError, err
 load .config: config_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .verify: VerifyError, check_blake3, audit_tar
@@ -59,7 +59,7 @@ fun pkg_dir(dl: string, name: string) -> string {
 // Каталог, в котором нашёлся исполняемый файл команды сборки; "" — он в /usr (уже виден в песочнице).
 public fun tool_dir(argv0: string) -> string {
     set found = ""
-    if starts_with(argv0, "/") {
+    if str_starts(argv0, "/") {
         rewrite found = path_parent(argv0)
     } else {
         set dirs = split(get_or("PATH", ""), ":")
@@ -70,7 +70,7 @@ public fun tool_dir(argv0: string) -> string {
             }
         }
     }
-    if found.len() == 0 || starts_with(found, "/usr/") || eq(found, "/usr") || starts_with(found, "/bin") || starts_with(found, "/sbin") {
+    if found.len() == 0 || str_starts(found, "/usr/") || eq(found, "/usr") || str_starts(found, "/bin") || str_starts(found, "/sbin") {
         return ""
     }
     return found

@@ -33,7 +33,7 @@ load .index: seen_get, seen_set
 load .fetch: http_text
 load .explain: explain_lines
 load .cmdlist: help_lines, suggest, completion_script
-load .util: now_secs, valid_name, valid_version, ver_cmp, starts_with, index_of, join2
+load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2
 
 fun yn(b: bool) -> string {
     if b {
@@ -85,7 +85,7 @@ fun plan_for(name: string, want: string) -> PNode[] {
 }
 
 public fun cmd_show(spec: string) {
-    set at = index_of(spec, "@")
+    set at = str_index(spec, "@")
     set name = spec
     set want = ""
     if at > 0 {
@@ -587,7 +587,7 @@ public fun cmd_import(file: string) {
     set ls = lines(file_read_text(file))
     for i in 0..ls.len() {
         set l = trim(ls[i])
-        if l.len() > 0 && !starts_with(l, "#") {
+        if l.len() > 0 && !str_starts(l, "#") {
             cmd_sys_install(l)
         }
     }
@@ -597,7 +597,7 @@ public fun cmd_import(file: string) {
 
 public fun cmd_explain(code: string) {
     set raw = lower(trim(code))
-    if starts_with(raw, "y") {
+    if str_starts(raw, "y") {
         rewrite raw = slice(raw, 1, raw.len())
     }
     set n: int64 = parse_int(raw) ?? 0
@@ -654,7 +654,7 @@ public fun cmd_completions(shell: string) {
 // ── сборка пакета ───────────────────────────────────────────────────────
 
 fun tools_strip_root(p: string, root: string) -> string {
-    if starts_with(p, root + "/") {
+    if str_starts(p, root + "/") {
         return slice(p, root.len() + 1, p.len())
     }
     return ""

@@ -19,7 +19,7 @@ load std.fs.archives.tar: tar_unpack, tar_list, TarError
 load std.hash.blake3: blake3_file
 load std.process: run
 load std.stdotool.format: format_bytes
-load std.strings: eq, lower, trim, str_join, parse_int, lines, contains, slice, pad_end, index_of, split
+load std.strings: eq, lower, trim, str_join, parse_int, lines, contains, slice, pad_end, split
 load .errors: YukiError, err
 load .config: state_dir, host_target, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .view: InstallView
@@ -33,7 +33,7 @@ load .pipeline: archive_ext
 load .verify: VerifyError, check_blake3, audit_tar
 load .apply: ApplyItem, apply_transaction, remove_package, rollback_locked, check_package
 load .sysdb: PkgRecord, is_held, is_explicit, mark_explicit, orphans, dependents_of, db_names, db_read, db_has, db_files, owner_of, f_kind, f_path, history_add
-load .util: now_ms, valid_name, valid_version, dep_name, starts_with, ends_with, join2
+load .util: now_ms, valid_name, valid_version, dep_name, str_starts, str_ends, join2
 
 fun sys_need_root() {
     if !is_root() {
@@ -139,10 +139,10 @@ fun plain_file(path: string) -> bool {
 
 fun norm_tar_path(p: string) -> string {
     set r = p
-    if starts_with(r, "./") {
+    if str_starts(r, "./") {
         rewrite r = slice(r, 2, r.len())
     }
-    if ends_with(r, "/") {
+    if str_ends(r, "/") {
         rewrite r = slice(r, 0, r.len() - 1)
     }
     return r
@@ -567,7 +567,7 @@ public fun cmd_sys_files(name: string) {
 
 public fun cmd_sys_owns(path: string) {
     set rel = path
-    if starts_with(path, "/") {
+    if str_starts(path, "/") {
         rewrite rel = slice(path, 1, path.len())
     }
     set who = owner_of(rel)

@@ -21,7 +21,7 @@ load core.utils: cast
 load core.panic: panic
 load std.json: JsonValue, json_parse, json_stringify
 load std.outf: strip_ansi
-load std.strings: eq, trim, lines, split, slice, str_join, pad_end, parse_int, contains, starts_with, lower
+load std.strings: eq, trim, lines, split, slice, str_join, pad_end, parse_int, contains, lower
 load std.fs.files: file_exists, file_read_text, file_write_text
 load .errors: YukiError, err
 load .config: index_urls, state_dir, ensure_dirs, host_target, MAX_INDEX_FILE

@@ -24,7 +24,7 @@ load std.json: JsonValue, json_parse, json_object, json_array, json_string, json
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all, dir_walk
 load std.fs.paths: path_join, path_parent, path_file_name, path_file_stem
-load std.strings: eq, trim, starts_with, split, slice, str_join, contains, parse_int
+load std.strings: eq, trim, split, slice, str_join, contains, parse_int
 load .errors: YukiError, err
 load .ui: ok, info, warn, bad, step, c_accent, c_dim, c_good
 load .index: Release, entry_rel, entry_dir, resolve_text
@@ -32,7 +32,7 @@ load .trust: sign_text, pubkey_of
 load .pipeline: fetch_unpinned
 load .fetch: check_url
 load .verify: VerifyError, checksum_ok_format
-load .util: valid_name, valid_version, valid_dep_spec, dep_name, ver_cmp, now_secs, ends_with
+load .util: valid_name, valid_version, valid_dep_spec, dep_name, ver_cmp, now_secs, str_ends
 
 static ENTRY_LIFETIME: int64 = 7776000
 static RENEW_WARN: int64 = 2592000
@@ -237,11 +237,11 @@ public fun cmd_index_check(download: bool) {
     set checked: int64 = 0
     for i in 0..all.len() {
         set p = all[i]
-        if !ends_with(p, ".json") {
+        if !str_ends(p, ".json") {
             continue
         }
         set name = stem_of(p)
-        if !valid_name(name) || !ends_with(p, entry_rel(name)) {
+        if !valid_name(name) || !str_ends(p, entry_rel(name)) {
             bad(p + ": the path does not match the package name")
             rewrite problems += 1
             continue
@@ -322,7 +322,7 @@ public fun cmd_index_catalog(keyname: string) {
     set pk = json_array([])
     for i in 0..all.len() {
         set p = all[i]
-        if !ends_with(p, ".json") {
+        if !str_ends(p, ".json") {
             continue
         }
         set doc = json_parse(file_read_text(p))
@@ -367,7 +367,7 @@ public fun cmd_index_renew_all(keyname: string, days: int64) {
     set renewed: int64 = 0
     for i in 0..all.len() {
         set p = all[i]
-        if !ends_with(p, ".json") {
+        if !str_ends(p, ".json") {
             continue
         }
         set doc = json_parse(file_read_text(p))

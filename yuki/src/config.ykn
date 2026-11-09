@@ -7,7 +7,7 @@ load std.fs.files: file_exists, file_read_text
 load std.env: get_env, get_or
 load std.sysinfo: os_name, cpu_arch
 load std.strings: trim, lines, eq, lower, slice, contains, split, str_join
-load .util: ends_with, join2
+load .util: str_ends, join2
 load .errors: YukiError, err
 
 public static MAX_ENTRIES: int64 = 20000
@@ -106,7 +106,7 @@ public fun index_urls() -> string[] {
     set parts = split(replace_commas(raw), "\n")
     for i in 0..parts.len() {
         set u = trim(parts[i])
-        if ends_with(u, "/") {
+        if str_ends(u, "/") {
             rewrite u = slice(u, 0, u.len() - 1)
         }
         if u.len() > 0 {

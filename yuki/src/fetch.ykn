@@ -14,7 +14,7 @@ load std.fs.files: File, open_write, file_remove, file_write_text
 load std.stdotool.format: format_speed
 load .errors: YukiError, err
 load .config: host_allowed
-load .util: now_ms, starts_with, index_of
+load .util: now_ms, str_starts, str_index
 
 public struct Response {
     status: int32
@@ -37,21 +37,21 @@ struct BodyReader {
 }
 
 fun parse_target(url: string) -> Target {
-    if !starts_with(url, "https://") {
+    if !str_starts(url, "https://") {
         panic(err("only https:// URLs are allowed", 401, url))
     }
     if contains(url, " ") || contains(url, "\r") || contains(url, "\n") || contains(url, "\\") || contains(url, "\"") || contains(url, "|") || contains(url, "\t") {
         panic(err("URL contains forbidden characters", 402, url))
     }
     set rest = slice(url, 8, url.len())
-    set slash = index_of(rest, "/")
+    set slash = str_index(rest, "/")
     set authority = rest
     set path = "/"
     if slash >= 0 {
         rewrite authority = slice(rest, 0, slash)
         rewrite path = slice(rest, slash, rest.len())
     }
-    set hash = index_of(path, "#")
+    set hash = str_index(path, "#")
     if hash >= 0 {
         rewrite path = slice(path, 0, hash)
     }
@@ -72,7 +72,7 @@ public fun check_url(url: string) {
 
 fun header_value(ref hl: string[], name: string) -> string {
     for i in 1..hl.len() {
-        set colon = index_of(hl[i], ":")
+        set colon = str_index(hl[i], ":")
         if colon > 0 {
             if eq(lower(trim(slice(hl[i], 0, colon))), name) {
                 return trim(slice(hl[i], colon + 1, hl[i].len()))
@@ -95,7 +95,7 @@ fun read_chunk(ref ~tls: TlsStream) -> string {
 }
 
 fun hexval(ch: string) -> int64 {
-    return index_of("0123456789abcdef", lower(ch))
+    return str_index("0123456789abcdef", lower(ch))
 }
 
 fun parse_hex(s: string) -> int64 {
@@ -128,7 +128,7 @@ fun next_piece(ref ~tls: TlsStream, ref ~r: BodyReader) -> string {
             return ""
         }
         if r.state == 0 {
-            set eol = index_of(r.raw, "\r\n")
+            set eol = str_index(r.raw, "\r\n")
             if eol < 0 {
                 set more = read_chunk(ref ~tls)
                 if more.len() == 0 {
@@ -138,7 +138,7 @@ fun next_piece(ref ~tls: TlsStream, ref ~r: BodyReader) -> string {
                 continue
             }
             set line = slice(r.raw, 0, eol)
-            set semi = index_of(line, ";")
+            set semi = str_index(line, ";")
             if semi >= 0 {
                 rewrite line = slice(line, 0, semi)
             }
@@ -227,7 +227,7 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
         if head.len() > 65536 {
             panic(err("response headers are too large", 406, url))
         }
-        set idx = index_of(head, "\r\n\r\n")
+        set idx = str_index(head, "\r\n\r\n")
         if idx >= 0 {
             rewrite body_start = slice(head, idx + 4, head.len())
             rewrite head = slice(head, 0, idx)
@@ -313,10 +313,10 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
 }
 
 fun absolute_location(current: string, loc: string) -> string {
-    if starts_with(loc, "https://") {
+    if str_starts(loc, "https://") {
         return loc
     }
-    if starts_with(loc, "/") {
+    if str_starts(loc, "/") {
         set t = parse_target(current)
         return "https://" + t.host + loc
     }

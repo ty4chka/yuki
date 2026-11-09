@@ -25,7 +25,7 @@ load std.toml: parse, validate
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all
 load .config: config_dir
-load .util: is_hex, starts_with, index_of, join2
+load .util: is_hex, str_starts, str_index, join2
 
 public fun theme_path() -> string {
     set p = get_or("YUKI_THEME_FILE", "")
@@ -212,7 +212,7 @@ public fun spinner_frames() -> string[] {
 // ── раскраска ───────────────────────────────────────────────────────────
 
 fun theme_hexval(ch: string) -> int32 {
-    set i = index_of("0123456789abcdef", lower(ch))
+    set i = str_index("0123456789abcdef", lower(ch))
     if i < 0 {
         return 0
     }
@@ -259,7 +259,7 @@ fun ansi(st: Styled, name: string) -> Styled {
 }
 
 fun is_hex_color(base: string) -> bool {
-    return starts_with(base, "#") && base.len() == 7 && is_hex(slice(base, 1, 7))
+    return str_starts(base, "#") && base.len() == 7 && is_hex(slice(base, 1, 7))
 }
 
 fun colorize(st: Styled, base: string) -> Styled {
@@ -272,14 +272,14 @@ fun colorize(st: Styled, base: string) -> Styled {
         }
         return st.color256(rgb256(r, g, b))
     }
-    if starts_with(base, "256:") {
+    if str_starts(base, "256:") {
         set n = parse_int(slice(base, 4, base.len())) ?? -1
         if n >= 0 && n <= 255 {
             return st.color256(cast(n, "int32"))
         }
         return st
     }
-    if starts_with(base, "ansi:") {
+    if str_starts(base, "ansi:") {
         return ansi(st, slice(base, 5, base.len()))
     }
     return st

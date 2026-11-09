@@ -15,7 +15,7 @@ load .errors: YukiError, err
 load .config: MAX_INDEX_FILE
 load .index: Release, EntryText, fetch_entry, resolve_text, index_get
 load .sysdb: db_has, db_read
-load .util: dep_name, dep_version, index_of, join2
+load .util: dep_name, dep_version, str_index, join2
 
 public struct PNode {
     rel: Release
@@ -29,7 +29,7 @@ static PLAN_MAX_DEPTH: int32 = 16
 static PLAN_MAX_NODES: int64 = 128
 
 public fun spec_name(spec: string) -> string {
-    set at = index_of(spec, "@")
+    set at = str_index(spec, "@")
     if at > 0 {
         return slice(spec, 0, at)
     }
@@ -37,7 +37,7 @@ public fun spec_name(spec: string) -> string {
 }
 
 public fun spec_ver(spec: string) -> string {
-    set at = index_of(spec, "@")
+    set at = str_index(spec, "@")
     if at > 0 {
         return slice(spec, at + 1, spec.len())
     }

@@ -6,7 +6,7 @@
 load core.panic: panic
 load std.fs.files: file_exists, file_read_text, file_write_text, file_rename
 load std.strings: lines, trim, slice, eq, str_join, split
-load .util: starts_with, index_of, index_of_from
+load .util: str_starts, str_index, str_index_from
 load .errors: YukiError, err
 
 static MANIFEST: string = "yuki.toml"
@@ -36,10 +36,10 @@ fun write_manifest(text: string) {
 
 fun line_name(line: string) -> string {
     set t = trim(line)
-    if t.len() == 0 || starts_with(t, "#") || starts_with(t, "[") {
+    if t.len() == 0 || str_starts(t, "#") || str_starts(t, "[") {
         return ""
     }
-    set i = index_of(t, "=")
+    set i = str_index(t, "=")
     if i <= 0 {
         return ""
     }
@@ -48,12 +48,12 @@ fun line_name(line: string) -> string {
 
 fun quoted(t: string, key: string) -> string {
     set marker = key + " = \""
-    set s = index_of(t, marker)
+    set s = str_index(t, marker)
     if s < 0 {
         return ""
     }
     set start = s + marker.len()
-    set e = index_of_from(t, "\"", start)
+    set e = str_index_from(t, "\"", start)
     if e < 0 {
         return ""
     }
@@ -84,7 +84,7 @@ public fun upsert_dep(name: string, line: string) {
             out.push(ls[i])
             continue
         }
-        if in_section && starts_with(t, "[") {
+        if in_section && str_starts(t, "[") {
             if !done {
                 out.push(line)
                 rewrite done = true
@@ -120,7 +120,7 @@ public fun remove_dep(name: string) -> bool {
         set t = trim(ls[i])
         if eq(t, SECTION) {
             rewrite in_section = true
-        } elif starts_with(t, "[") {
+        } elif str_starts(t, "[") {
             rewrite in_section = false
         }
         if in_section && eq(line_name(ls[i]), name) {
@@ -146,12 +146,12 @@ public fun list_deps() -> Dep[] {
             rewrite in_section = true
             continue
         }
-        if starts_with(t, "[") {
+        if str_starts(t, "[") {
             rewrite in_section = false
         }
         if in_section {
             set n = line_name(t)
-            set m = index_of(t, "# yuki:")
+            set m = str_index(t, "# yuki:")
             if n.len() > 0 && m >= 0 {
                 set tail = split(trim(slice(t, m + 7, t.len())), " ")
                 set via = ""

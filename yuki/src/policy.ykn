@@ -2,12 +2,12 @@
 // Правила применяются к уже проверенному архиву, на стороне root.
 
 load std.strings: contains, eq
-load .util: starts_with, ends_with
+load .util: str_starts, str_ends
 load .verify: is_safe_rel_path
 
 fun starts_any(p: string, prefixes: string[]) -> bool {
     for i in 0..prefixes.len() {
-        if starts_with(p, prefixes[i]) {
+        if str_starts(p, prefixes[i]) {
             return true
         }
     }
@@ -22,7 +22,7 @@ public fun policy_check(pkg: string, rel: string) -> string {
     if contains(rel, " ") || contains(rel, "\t") || contains(rel, "\n") || contains(rel, "|") {
         return "whitespace or | in a path"
     }
-    if ends_with(rel, ".yuki-tmp") || ends_with(rel, ".yuki-new") || ends_with(rel, ".yuki-save") {
+    if str_ends(rel, ".yuki-tmp") || str_ends(rel, ".yuki-new") || str_ends(rel, ".yuki-save") {
         return "reserved file suffix"
     }
     set allowed = ["usr/", "opt/", "etc/"]
@@ -44,7 +44,7 @@ public fun policy_check(pkg: string, rel: string) -> string {
     }
 
     // бинарник самого yuki может заменить только пакет yuki
-    if starts_with(rel, "usr/bin/yuki") && !eq(pkg, "yuki") {
+    if str_starts(rel, "usr/bin/yuki") && !eq(pkg, "yuki") {
         return "only the yuki package may replace yuki"
     }
     return ""
@@ -52,5 +52,5 @@ public fun policy_check(pkg: string, rel: string) -> string {
 
 // Файлы в etc/ — конфигурация: изменённые пользователем не перезаписываются.
 public fun is_config(rel: string) -> bool {
-    return starts_with(rel, "etc/")
+    return str_starts(rel, "etc/")
 }

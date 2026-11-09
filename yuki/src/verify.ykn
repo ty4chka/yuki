@@ -11,7 +11,7 @@ load std.hash.blake3: blake3_file
 load std.crypto: ed25519_verify
 load std.fs.files: file_read_text
 load std.fs.archives.tar: tar_list
-load .util: is_hex, starts_with
+load .util: is_hex, str_starts
 
 // Коды: 1 — несовпадение хеша, 2 — неверный формат хеша, 3 — плохая подпись,
 //       4 — небезопасный путь, 5 — ссылка/спецфайл в архиве, 6 — превышен лимит
@@ -36,7 +36,7 @@ public fun signed_message(text: string) -> string {
 // ── 1. хеш ──────────────────────────────────────────────────────────────
 
 public fun checksum_ok_format(c: string) -> bool {
-    if !starts_with(c, "blake3:") || c.len() != 71 {
+    if !str_starts(c, "blake3:") || c.len() != 71 {
         return false
     }
     return is_hex(slice(c, 7, 71))
@@ -96,7 +96,7 @@ public fun is_safe_rel_path(p: string) -> bool {
     if p.len() == 0 || p.len() > 1024 {
         return false
     }
-    if starts_with(p, "/") || contains(p, "\\") || contains(p, "\0") || contains(p, ":") {
+    if str_starts(p, "/") || contains(p, "\\") || contains(p, "\0") || contains(p, ":") {
         return false
     }
     set parts = split(p, "/")
@@ -114,7 +114,7 @@ public fun link_target_ok(link_rel: string, target: string) -> bool {
     if target.len() == 0 || target.len() > 512 {
         return false
     }
-    if starts_with(target, "/") || contains(target, "\\") || contains(target, ":") || contains(target, " ") || contains(target, "\0") || contains(target, "|") {
+    if str_starts(target, "/") || contains(target, "\\") || contains(target, ":") || contains(target, " ") || contains(target, "\0") || contains(target, "|") {
         return false
     }
     set base = split(link_rel, "/")

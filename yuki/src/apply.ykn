@@ -22,7 +22,7 @@ load .priv: sync_disk
 load .policy: policy_check, is_config
 load .verify: link_target_ok
 load .sysdb: PkgRecord, db_has, db_dir, db_read, db_write, db_files, db_remove, owner_of, dependents_of, history_add, f_hash, f_mode, f_kind, f_path
-load .util: now_secs, now_ms, starts_with, join2
+load .util: now_secs, now_ms, str_starts, join2
 
 public struct ApplyItem {
     name: string
@@ -163,7 +163,7 @@ fun recover_interrupted() {
 // ── сканирование пакета ─────────────────────────────────────────────────
 
 fun apply_strip_root(p: string, root: string) -> string {
-    if starts_with(p, root + "/") {
+    if str_starts(p, root + "/") {
         return slice(p, root.len() + 1, p.len())
     }
     return ""
