@@ -96,21 +96,37 @@ public fun valid_version(v: string) -> bool {
 }
 
 // 1 если a > b, -1 если a < b, 0 если равны. Вызывать только после valid_version.
+// Число из строки цифр без parse_int (только 0-9; остальное считается за 0).
+public fun digits_val(s: string) -> int64 {
+    set v: int64 = 0
+    for i in 0..s.len() {
+        set d: int64 = 0
+        for k in 0..10 {
+            if eq(slice("0123456789", k, k + 1), slice(s, i, i + 1)) {
+                rewrite d = k
+            }
+        }
+        rewrite v = v * 10 + d
+    }
+    return v
+}
+
 public fun ver_cmp(a: string, b: string) -> int64 {
     set pa = split(a, ".")
     set pb = split(b, ".")
+    set r: int64 = 0
     for i in 0..3 {
-        set x: int64 = parse_int(pa[i]) ?? 0
-        set y: int64 = parse_int(pb[i]) ?? 0
-        if x > y {
-            return 1
-        }
-        if x < y {
-            set neg: int64 = 0 - 1
-            return neg
+        if r == 0 {
+            set x: int64 = digits_val(pa[i])
+            set y: int64 = digits_val(pb[i])
+            if x > y {
+                rewrite r = 1
+            } elif x < y {
+                rewrite r = 0 - 1
+            }
         }
     }
-    return 0
+    return r
 }
 
 // "имя@1.2.3" — зависимость с точным закреплением версии

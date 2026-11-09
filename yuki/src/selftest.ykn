@@ -13,12 +13,12 @@ load std.crypto: ed25519_public_key, ed25519_sign, random_bytes
 load std.fs.files: file_exists, file_write_text, file_read_text, file_remove
 load std.fs.dirs: dir_create_all, dir_remove_all
 load std.fs.defaults: dir_temp
-load std.strings: eq, contains, slice
+load std.strings: eq, contains, slice, split, parse_int
 load .errors: YukiError, err
 load .config: host_target
 load std.io: println
 load .ui: ok, bad, info, c_dim
-load .util: valid_name, valid_version, ver_cmp, edit_distance, is_hex, now_ms, join2
+load .util: valid_name, valid_version, ver_cmp, digits_val, edit_distance, is_hex, now_ms, join2
 load .verify: is_safe_rel_path, link_target_ok, checksum_ok_format, verify_text, signed_message
 load .policy: policy_check
 
@@ -83,6 +83,15 @@ public fun cmd_selftest() {
     check(vc_a > 0, "version comparison: 1.10.0 is newer than 1.9.9", ref ~failed)
     check(vc_b == 0, "version comparison: equal versions", ref ~failed)
     check(vc_c < 0, "version comparison: 0.9.9 is older than 1.0.0", ref ~failed)
+    check(digits_val("1024") == 1024, "digits_val parses 1024", ref ~failed)
+    set pi_a: int64 = parse_int("42") ?? 0
+    check(pi_a == 42, "parse_int(42) with a default gives 42", ref ~failed)
+    set pi_b: int64? = parse_int("10")
+    check(pi_b != null, "parse_int(10) is not null", ref ~failed)
+    set pi_c: int64? = parse_int("x1")
+    check(pi_c == null, "parse_int(x1) is null", ref ~failed)
+    set sp: string[] = split("1.10.0", ".")
+    check(sp.len() == 3 && eq(sp[1], "10"), "split 1.10.0 gives 3 parts", ref ~failed)
     check(edit_distance("instal", "install") == 1 && edit_distance("abc", "abc") == 0, "edit distance", ref ~failed)
     check(checksum_ok_format("blake3:" + blake3_str("x")) && !checksum_ok_format("blake3:xyz") && !checksum_ok_format("sha256:" + blake3_str("x")), "checksum format", ref ~failed)
 
