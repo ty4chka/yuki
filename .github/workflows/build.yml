@@ -112,6 +112,95 @@ jobs:
           BIN=$(find "$d/yuki-work" -type f \( -name yuki -o -name yuki_debug \) 2>/dev/null | head -1)
           if [ -n "$BIN" ]; then chmod +x "$BIN"; out=$(timeout 10 "$BIN" version < /dev/null 2>&1); echo "[debug] version rc=$?: $(echo "$out" | head -2 | tr '\n' '|')"; else echo "[debug] бинарь не найден"; tail -3 "$d/build.log"; fi
 
+      - name: Diagnostic - minimal args() repro
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set +e
+          mk() {
+            d="$RUNNER_TEMP/tiny_$1"; rm -rf "$d"; mkdir -p "$d/src"
+            cat > "$d/yuki.toml" <<'TOML'
+          [bin]
+          name = "tiny"
+          namedbg = "tiny_debug"
+          version = "0.1.0"
+          entry = "src/main.ykn"
+          yukino = ["0.1.0", "+"]
+
+          [config.release]
+          opt_level = 3
+          lto = true
+          panic_strategy = "unwind"
+          reloc_model = "pic"
+          emit = ["bin"]
+
+          [features]
+          default = []
+          TOML
+            sed -i 's/^          //' "$d/yuki.toml"
+            cat > "$d/src/main.ykn"
+          }
+          run_tiny() {
+            d="$RUNNER_TEMP/tiny_$1"
+            ( cd "$d" && yukino build release > build.log 2>&1 ); brc=$?
+            BIN=$(find "$d" -type f -name tiny -perm -u+x 2>/dev/null | head -1)
+            if [ -z "$BIN" ]; then echo "[tiny_$1] build rc=$brc, бинарь не найден"; tail -5 "$d/build.log"; return; fi
+            out=$(timeout 10 "$BIN" 2>&1); echo "[tiny_$1] без аргументов rc=$?: $(echo "$out" | tr '\n' '|')"
+            out=$(timeout 10 "$BIN" foo bar 2>&1); echo "[tiny_$1] foo bar rc=$?: $(echo "$out" | tr '\n' '|')"
+          }
+          mk a <<'YKN'
+          load std.io: eprintln
+          load core.process: args
+          fun main() {
+              eprintln("A: start")
+              set a = args()
+              eprintln("A: got args")
+              set n: int64 = a.len()
+              if n > 0 {
+                  eprintln(a[0])
+              }
+              eprintln("A: done")
+          }
+          YKN
+          mk b <<'YKN'
+          load std.io: eprintln
+          load core.process: raw_args
+          fun main() {
+              eprintln("B: start")
+              set r = raw_args()
+              eprintln("B: got raw")
+              eprintln(r)
+              eprintln("B: done")
+          }
+          YKN
+          mk c <<'YKN'
+          load std.io: eprintln
+          load core.process: args
+          public fun warn(msg: string) {
+              eprintln(msg)
+          }
+          public fun step(n: int64, total: int64, msg: string) {
+              eprintln(msg)
+          }
+          public fun err(message: string, code: int32, path: string) -> string {
+              return message
+          }
+          fun main() {
+              warn("C: start")
+              step(1, 2, "C: step")
+              set a = args()
+              eprintln("C: got args")
+              set e = err("C: err", 1, "")
+              eprintln(e)
+              set n: int64 = a.len()
+              if n > 0 {
+                  eprintln(a[0])
+              }
+          }
+          YKN
+          for t in a b c; do sed -i 's/^          //' "$RUNNER_TEMP/tiny_$t/src/main.ykn"; run_tiny $t; done
+
       - name: Errors summary (только при падении)
         if: failure()
         shell: bash
