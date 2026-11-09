@@ -103,15 +103,24 @@ jobs:
           if-no-files-found: ignore
 
       - name: Smoke - version + selftest
+        timeout-minutes: 5
         shell: bash
         run: |
-          set -e
+          set -u
           # release-бинарь зовётся yuki, debug - yuki_debug (namedbg); ловим оба
           BIN=$(find "$PROJ_DIR/yuki-work" -type f \( -name yuki -o -name yuki_debug \) | head -1)
           [ -n "$BIN" ] || { echo "бинарь не найден под $PROJ_DIR/yuki-work/"; exit 1; }
           chmod +x "$BIN"
-          "$BIN" version
-          "$BIN" selftest
+          file "$BIN" || true
+          # без stdin и с таймаутом: зависание станет ошибкой с кодом 124, а не 20 минутами тишины
+          echo "== version =="
+          timeout 30 "$BIN" version < /dev/null 2>&1; rc=$?
+          echo "version exit code: $rc"
+          [ "$rc" = "0" ] || exit 1
+          echo "== selftest =="
+          timeout 90 "$BIN" selftest < /dev/null 2>&1; rc=$?
+          echo "selftest exit code: $rc (124 = завис)"
+          [ "$rc" = "0" ] || exit 1
 
       - name: Pack
         shell: bash
