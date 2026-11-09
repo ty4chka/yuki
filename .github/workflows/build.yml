@@ -74,6 +74,44 @@ jobs:
           done
           [ "$ok" = "1" ] || { echo "yukino build release failed"; exit 1; }
 
+      - name: Diagnostic - which build flags break the binary
+        continue-on-error: true
+        timeout-minutes: 10
+        shell: bash
+        run: |
+          set +e
+          set -u
+          run_variant() {
+            name="$1"; shift
+            d="$RUNNER_TEMP/var_$name"
+            rm -rf "$d"; mkdir -p "$d"
+            cp -r "$PROJ_DIR"/. "$d"/
+            rm -rf "$d/yuki-work" "$d/build.log" "$d/clean.log"
+            for kv in "$@"; do
+              key="${kv%%=*}"; val="${kv#*=}"
+              sed -i -E "s|^${key} *=.*|${key} = ${val}|" "$d/yuki.toml"
+            done
+            ( cd "$d" && yukino build release > build.log 2>&1 ); brc=$?
+            BIN=$(find "$d/yuki-work" -type f \( -name yuki -o -name yuki_debug \) 2>/dev/null | head -1)
+            if [ -z "$BIN" ]; then echo "[$name] build rc=$brc, бинарь не найден"; tail -3 "$d/build.log"; return; fi
+            chmod +x "$BIN"
+            out=$(timeout 10 "$BIN" version < /dev/null 2>&1); rc=$?
+            echo "[$name] build rc=$brc, version rc=$rc: $(echo "$out" | head -2 | tr '\n' '|')"
+          }
+          echo "базовый yuki.toml:"; sed -n '/config.release/,/^$/p' "$PROJ_DIR/yuki.toml"
+          run_variant base
+          run_variant no_lto lto=false
+          run_variant no_strip_unused strip_unused=false
+          run_variant no_inline_statics inline_statics=false
+          run_variant opt0 opt_level=0
+          run_variant opt1 opt_level=1
+          run_variant all_off opt_level=0 lto=false strip_unused=false inline_statics=false
+          # debug-профиль
+          d="$RUNNER_TEMP/var_debug"; rm -rf "$d"; mkdir -p "$d"; cp -r "$PROJ_DIR"/. "$d"/; rm -rf "$d/yuki-work"
+          ( cd "$d" && yukino build > build.log 2>&1 ); echo "[debug] build rc=$?"
+          BIN=$(find "$d/yuki-work" -type f \( -name yuki -o -name yuki_debug \) 2>/dev/null | head -1)
+          if [ -n "$BIN" ]; then chmod +x "$BIN"; out=$(timeout 10 "$BIN" version < /dev/null 2>&1); echo "[debug] version rc=$?: $(echo "$out" | head -2 | tr '\n' '|')"; else echo "[debug] бинарь не найден"; tail -3 "$d/build.log"; fi
+
       - name: Errors summary (только при падении)
         if: failure()
         shell: bash
