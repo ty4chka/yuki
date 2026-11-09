@@ -3,7 +3,7 @@
 load core.utils: cast
 load core.panic: panic
 load core.process: exit, args
-load std.io: println
+load std.io: println, eprintln
 load std.strings: eq, slice, str_join, parse_int
 load .util: str_starts
 load std.env: get_or, set_env
@@ -403,20 +403,26 @@ fun dispatch(ref argv: string[]) {
 }
 
 fun main() {
+    eprintln("TRACE main: start") // TRACE
     set raw = args()
+    eprintln("TRACE main: args ok, count=" + cast(raw.len(), "string")) // TRACE
     set translated: string[] = []
     if raw.len() > 0 && str_starts(raw[0], "-") && !str_starts(raw[0], "--") && !eq(raw[0], "-y") {
         rewrite translated = translate(ref raw)
     } else {
         rewrite translated = raw
     }
+    eprintln("TRACE main: translated ok") // TRACE
     set argv = strip_flags(ref translated)
+    eprintln("TRACE main: strip_flags ok, argc=" + cast(argv.len(), "string")) // TRACE
     if argv.len() > 0 {
         if is_system_cmd(argv[0]) || (eq(argv[0], "keys") && is_root()) {
             set_env("YUKI_SYSTEM", "1")
         }
     }
+    eprintln("TRACE main: before theme_init") // TRACE
     theme_init()
+    eprintln("TRACE main: theme_init ok") // TRACE
     if argv.len() == 0 {
         usage()
         exit(0)
@@ -427,6 +433,7 @@ fun main() {
         warn(tw)
     }
 
+    eprintln("TRACE main: before dispatch") // TRACE
     sus {
         dispatch(ref argv)
     } catch e: VerifyError {
