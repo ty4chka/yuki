@@ -103,7 +103,7 @@ jobs:
           if-no-files-found: ignore
 
       - name: Smoke - version + selftest
-        timeout-minutes: 5
+        timeout-minutes: 8
         shell: bash
         run: |
           set -u
@@ -111,12 +111,24 @@ jobs:
           BIN=$(find "$PROJ_DIR/yuki-work" -type f \( -name yuki -o -name yuki_debug \) | head -1)
           [ -n "$BIN" ] || { echo "бинарь не найден под $PROJ_DIR/yuki-work/"; exit 1; }
           chmod +x "$BIN"
-          file "$BIN" || true
-          # без stdin и с таймаутом: зависание станет ошибкой с кодом 124, а не 20 минутами тишины
+          # без stdin и с таймаутом: зависание станет кодом 124, а не 20 минутами тишины
           echo "== version =="
-          timeout 30 "$BIN" version < /dev/null 2>&1; rc=$?
+          timeout 20 "$BIN" version < /dev/null 2>&1; rc=$?
           echo "version exit code: $rc"
-          [ "$rc" = "0" ] || exit 1
+          if [ "$rc" != "0" ]; then
+            echo "::group::диагностика зависания"
+            sudo apt-get install -y -qq strace > /dev/null 2>&1 || true
+            echo "-- без темы (YUKI_THEME_READY=1 YUKI_ASCII=1) --"
+            YUKI_THEME_READY=1 YUKI_ASCII=1 timeout 20 "$BIN" version < /dev/null 2>&1; echo "exit: $?"
+            echo "-- help --"
+            timeout 20 "$BIN" help < /dev/null 2>&1 | head -5; echo "exit: ${PIPESTATUS[0]}"
+            echo "-- strace (последние 40 системных вызовов) --"
+            timeout 20 strace -f -tt -o /tmp/strace.txt "$BIN" version < /dev/null > /dev/null 2>&1 || true
+            wc -l /tmp/strace.txt || true
+            tail -40 /tmp/strace.txt || true
+            echo "::endgroup::"
+            exit 1
+          fi
           echo "== selftest =="
           timeout 90 "$BIN" selftest < /dev/null 2>&1; rc=$?
           echo "selftest exit code: $rc (124 = завис)"
