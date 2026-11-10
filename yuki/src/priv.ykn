@@ -8,10 +8,12 @@
 load core.panic: panic
 load core.process: exit
 load core.mem: ptr_of
+load core.utils: cast
 load std.os.unix: fork, waitpid, kill, geteuid
-load std.env: get_or
-load std.strings: eq, trim
+load std.fs.files: file_exists, file_read_text
+load std.strings: trim, parse_int
 load .errors: YukiError, err
+load .util: str_starts, join2, str_split
 
 cfun setgroups(size: c_size_t, list: ptr<c_uint>) -> c_int;
 cfun setgid(gid: c_uint) -> c_int;
@@ -29,14 +31,36 @@ public fun nobody_id() -> c_uint {
     return id
 }
 
-// proot не изолирует uid: geteuid()==0 и setuid() отчитываются об успехе,
-// но процесс остаётся с прежними правами, и kill(-1) убивает весь сеанс
-// (включая Termux). В таком окружении фазу разделения привилегий пропускаем.
+// Настоящий uid ядра: первое число строки "Uid:" в /proc/self/status.
+// proot подменяет только возврат geteuid(), а статус процесса остаётся честным.
+fun real_uid() -> int64 {
+    set f = "/proc/self/status"
+    if !file_exists(f) {
+        return cast(geteuid(), "int64")
+    }
+    set ls = str_split(file_read_text(f), "\n")
+    for i in 0..ls.len() {
+        set line = ls[i]
+        if str_starts(line, "Uid:") {
+            set fields = str_split(trim(line), " ")
+            for j in 0..fields.len() {
+                set p = trim(fields[j])
+                if p.len() > 0 && p != "Uid:" {
+                    return parse_int(p) ?? -1
+                }
+            }
+        }
+    }
+    return cast(geteuid(), "int64")
+}
+
+// Эмуляция привилегий (proot): geteuid()==0, но ядро видит обычного пользователя.
+// Там setuid() ничего не меняет, а kill(-1) убивает весь сеанс Termux.
 public fun enc_is_proot() -> bool {
-    if eq(trim(get_or("PROOT_TMP_DIR", "")), "") && eq(trim(get_or("PROOT_NO_SECCOMP", "")), "") && eq(trim(get_or("PROOT_LOADER", "")), "") {
+    if geteuid() != 0 {
         return false
     }
-    return true
+    return real_uid() != 0
 }
 
 public fun drop_privileges(uid: c_uint, gid: c_uint) {
@@ -69,7 +93,7 @@ public fun drop_privileges(uid: c_uint, gid: c_uint) {
 
 // Убить все процессы пользователя uid: после ребёнка не должно остаться демонов,
 // которые продолжили бы менять файлы, пока root их проверяет.
-// kill(-1) допустим только в настоящем окружении с разделением uid.
+// kill(-1) допустим только там, где разделение uid настоящее.
 public fun kill_all_as(uid: c_uint) {
     if !is_root() {
         return
