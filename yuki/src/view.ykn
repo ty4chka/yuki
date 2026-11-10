@@ -16,10 +16,9 @@
 load core.utils: cast
 load std.stdotool.live_area: LiveArea
 load std.io: println
-load std.strings: pad_end
 load .ui: ok, rule, c_accent, c_good, c_warn, c_bad, c_dim, c_speed, c_bold, render_bar
 load .theme: sym, spinner_frames, paint
-load .util: now_ms
+load .util: now_ms, str_pad_end
 
 public class InstallView {
     public animated: bool
@@ -208,7 +207,7 @@ public class InstallView {
                 rewrite icon = c_warn(this.spin())
                 rewrite note = this.active_note(p)
             }
-            out.push("  " + icon + " " + c_dim(pad_end(labels[p], 9)) + note)
+            out.push("  " + icon + " " + c_dim(str_pad_end(labels[p], 9)) + note)
         }
         out.push("")
         set tl = this.tree_lines()

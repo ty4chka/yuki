@@ -17,8 +17,8 @@ load std.fs.paths: path_parent, path_file_name
 load std.fs.archives.tar: tar_unpack, tar_pack_dir
 load std.os.unix: chmod
 load std.env: get_or
-load std.strings: lines, split, eq, trim, slice, str_join
-load .util: str_starts, join2
+load std.strings: eq, trim, slice
+load .util: str_starts, join2, str_lines, str_split
 load .errors: YukiError, err
 load .config: config_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .verify: VerifyError, check_blake3, audit_tar
@@ -62,7 +62,7 @@ public fun tool_dir(argv0: string) -> string {
     if str_starts(argv0, "/") {
         rewrite found = path_parent(argv0)
     } else {
-        set dirs = split(get_or("PATH", ""), ":")
+        set dirs = str_split(get_or("PATH", ""), ":")
         for i in 0..dirs.len() {
             if dirs[i].len() > 0 && file_exists(join2(dirs[i], argv0)) {
                 rewrite found = dirs[i]
@@ -88,7 +88,7 @@ fun extra_binds() -> string[] {
     set out: string[] = []
     set f = join2(config_dir(), "ro_binds")
     if file_exists(f) {
-        set ls = lines(file_read_text(f))
+        set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
             if trim(ls[i]).len() > 0 {
                 out.push("--ro-bind")
@@ -187,7 +187,7 @@ fun build_source(dl: string, ref pn: PNode) {
     set out = join2(dir, "out")
     dir_create_all(out)
     for i in 0..pn.rel.files.len() {
-        set p = split(pn.rel.files[i], "|")
+        set p = str_split(pn.rel.files[i], "|")
         set from = join2(work, p[0])
         set to = join2(out, p[1])
         if !file_exists(from) {
@@ -218,7 +218,7 @@ public fun child_fetch(dl: string, approved_path: string) {
     set nodes = plan_nodes(dl, ref roots, false, false)
     set ok_names: string[] = []
     if file_exists(approved_path) {
-        rewrite ok_names = lines(file_read_text(approved_path))
+        rewrite ok_names = str_lines(file_read_text(approved_path))
     }
 
     // 1. задачи загрузки: готовые сборки и архивы исходников

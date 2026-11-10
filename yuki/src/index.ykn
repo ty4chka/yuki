@@ -21,14 +21,14 @@ load core.utils: cast
 load core.panic: panic
 load std.json: JsonValue, json_parse, json_stringify
 load std.outf: strip_ansi
-load std.strings: eq, trim, lines, split, slice, str_join, pad_end, parse_int, contains, lower
+load std.strings: eq, trim, slice, parse_int, contains
 load std.fs.files: file_exists, file_read_text, file_write_text
 load .errors: YukiError, err
 load .config: index_urls, state_dir, ensure_dirs, host_target, MAX_INDEX_FILE
 load .fetch: http_text, check_url
 load .trust: trusted_keys, trusted_roles, publish_threshold, fingerprint
 load .verify: VerifyError, verify_text, checksum_ok_format, is_safe_rel_path
-load .util: valid_name, valid_version, ver_cmp, now_secs, valid_dep_spec, join2
+load .util: valid_name, valid_version, ver_cmp, now_secs, valid_dep_spec, join2, sjoin, str_lines, str_lower, str_pad_end, str_split
 
 public struct Release {
     name: string
@@ -62,8 +62,8 @@ public struct EntryText {
 }
 
 public fun entry_dir(name: string) -> string {
-    set a = pad_end(slice(name, 0, 2), 2, "_")
-    set b = pad_end(slice(name, 2, 4), 2, "_")
+    set a = str_pad_end(slice(name, 0, 2), 2, "_")
+    set b = str_pad_end(slice(name, 2, 4), 2, "_")
     return "index/" + a + "/" + b
 }
 
@@ -82,9 +82,9 @@ public fun seen_get(name: string) -> int64 {
     if !file_exists(f) {
         return 0
     }
-    set ls = lines(file_read_text(f))
+    set ls = str_lines(file_read_text(f))
     for i in 0..ls.len() {
-        set p = split(trim(ls[i]), " ")
+        set p = str_split(trim(ls[i]), " ")
         if p.len() == 2 && eq(p[0], name) {
             return parse_int(p[1]) ?? 0
         }
@@ -98,9 +98,9 @@ public fun seen_set(name: string, seq: int64) {
     set out: string[] = []
     set found = false
     if file_exists(f) {
-        set ls = lines(file_read_text(f))
+        set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
-            set p = split(trim(ls[i]), " ")
+            set p = str_split(trim(ls[i]), " ")
             if p.len() == 2 {
                 if eq(p[0], name) {
                     out.push(name + " " + cast(seq, "string"))
@@ -114,7 +114,7 @@ public fun seen_set(name: string, seq: int64) {
     if !found {
         out.push(name + " " + cast(seq, "string"))
     }
-    file_write_text(f, str_join(out, "\n") + "\n")
+    file_write_text(f, sjoin(out, "\n") + "\n")
 }
 
 // ── разбор и проверка записи ────────────────────────────────────────────
@@ -172,7 +172,7 @@ public fun resolve(name: string, want: string) -> Release {
 
 // Описание пакета — только для показа: одна строка без управляющих символов, с лимитом длины.
 fun clean_text(s: string, max: int64) -> string {
-    set one = split(strip_ansi(s), "\n")[0]
+    set one = str_split(strip_ansi(s), "\n")[0]
     if one.len() > max {
         return slice(one, 0, max)
     }
@@ -202,11 +202,11 @@ fun has(ref l: string[], x: string) -> bool {
 fun verify_wrapper(text: string, sigtext: string, ref keys: string[], ref roles: string[], rel_path: string) -> Signed {
     set who: int64 = -1
     set pubs: string[] = []
-    set ls = lines(sigtext)
+    set ls = str_lines(sigtext)
     for i in 0..ls.len() {
-        set parts = split(trim(ls[i]), " ")
+        set parts = str_split(trim(ls[i]), " ")
         if parts.len() == 2 {
-            set pub = lower(parts[0])
+            set pub = str_lower(parts[0])
             set idx = index_of_key(ref keys, pub)
             if idx >= 0 && verify_text(pub, text, parts[1]) {
                 if who < 0 {
@@ -245,7 +245,7 @@ fun verify_content(doc: JsonValue, ref keys: string[], ref roles: string[], ref 
     set vtext = "content\n" + json_stringify(doc.get("versions"))
     set cs = doc.get("content_sigs")
     for i in 0..cs.len() {
-        set pub = lower(cs.at(i).get("key").as_string_or(""))
+        set pub = str_lower(cs.at(i).get("key").as_string_or(""))
         set sig = cs.at(i).get("sig").as_string_or("")
         set idx = index_of_key(ref keys, pub)
         if idx >= 0 && eq(roles[idx], "publisher") && !has(ref pubs, pub) && verify_text(pub, vtext, sig) {

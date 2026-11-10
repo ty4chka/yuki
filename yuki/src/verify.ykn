@@ -5,13 +5,13 @@
 
 load core.utils: cast
 load core.panic: panic
-load std.strings: split, contains, eq, lower, slice, trim
+load std.strings: contains, eq, slice, trim
 load std.hash: hex_to_bytes, constant_time_eq_str
 load std.hash.blake3: blake3_file
 load std.crypto: ed25519_verify
 load std.fs.files: file_read_text
 load std.fs.archives.tar: tar_list
-load .util: is_hex, str_starts
+load .util: is_hex, str_starts, str_lower, str_split
 
 // Коды: 1 — несовпадение хеша, 2 — неверный формат хеша, 3 — плохая подпись,
 //       4 — небезопасный путь, 5 — ссылка/спецфайл в архиве, 6 — превышен лимит
@@ -50,8 +50,8 @@ public fun check_blake3(path: string, expected: string) {
             path: path,
         })
     }
-    set want = lower(slice(expected, 7, 71))
-    set got = lower(blake3_file(path))
+    set want = str_lower(slice(expected, 7, 71))
+    set got = str_lower(blake3_file(path))
     if !constant_time_eq_str(want, got) {
         panic(VerifyError {
             message: "blake3 mismatch: expected " + want + ", got " + got,
@@ -99,7 +99,7 @@ public fun is_safe_rel_path(p: string) -> bool {
     if str_starts(p, "/") || contains(p, "\\") || contains(p, "\0") || contains(p, ":") {
         return false
     }
-    set parts = split(p, "/")
+    set parts = str_split(p, "/")
     for i in 0..parts.len() {
         if eq(parts[i], "..") {
             return false
@@ -117,14 +117,14 @@ public fun link_target_ok(link_rel: string, target: string) -> bool {
     if str_starts(target, "/") || contains(target, "\\") || contains(target, ":") || contains(target, " ") || contains(target, "\0") || contains(target, "|") {
         return false
     }
-    set base = split(link_rel, "/")
+    set base = str_split(link_rel, "/")
     set stack: string[] = []
     for i in 0..(base.len() - 1) {
         if base[i].len() > 0 {
             stack.push(base[i])
         }
     }
-    set parts = split(target, "/")
+    set parts = str_split(target, "/")
     for i in 0..parts.len() {
         if eq(parts[i], "..") {
             if stack.len() == 0 {

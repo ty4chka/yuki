@@ -15,14 +15,14 @@ load std.fs.files: file_exists, file_copy, file_rename, file_remove, file_metada
 load std.fs.dirs: dir_create, dir_create_all, dir_exists, dir_walk, dir_list, dir_remove, dir_remove_all, dir_is_empty, dir_copy_all
 load std.fs.paths: path_parent, path_file_name, path_is_symlink
 load std.hash.blake3: blake3_file
-load std.strings: lines, split, slice, eq, str_join, trim, parse_int
+load std.strings: slice, eq, trim, parse_int
 load .errors: YukiError, err
 load .config: state_dir
 load .priv: sync_disk
 load .policy: policy_check, is_config
 load .verify: link_target_ok
 load .sysdb: PkgRecord, db_has, db_dir, db_read, db_write, db_files, db_remove, owner_of, dependents_of, history_add, f_hash, f_mode, f_kind, f_path
-load .util: now_secs, now_ms, str_starts, join2
+load .util: now_secs, now_ms, str_starts, join2, sjoin, str_lines, str_split
 
 public struct ApplyItem {
     name: string
@@ -110,10 +110,10 @@ public fun rollback_tx(txid: string) {
     if !file_exists(jf) {
         panic(err("no journal for transaction " + txid, 731, txid))
     }
-    set ls = lines(file_read_text(jf))
+    set ls = str_lines(file_read_text(jf))
     for k in 0..ls.len() {
         set idx = ls.len() - 1 - k
-        set p = split(trim(ls[idx]), " ")
+        set p = str_split(trim(ls[idx]), " ")
         if p.len() == 0 {
             continue
         }
@@ -172,7 +172,7 @@ fun apply_strip_root(p: string, root: string) -> string {
 // Цель симлинка из списка, который root получил из аудированного архива ("" — такого нет).
 fun link_target_for(ref items: ApplyItem[], n: int64, rel: string) -> string {
     for k in 0..items[n].links.len() {
-        set p = split(items[n].links[k], "|")
+        set p = str_split(items[n].links[k], "|")
         if p.len() == 2 && eq(p[0], rel) {
             return p[1]
         }
@@ -240,7 +240,7 @@ fun apply_in_list(ref fl: string[], rel: string) -> bool {
 }
 
 fun depth_of(rel: string) -> int64 {
-    return split(rel, "/").len()
+    return str_split(rel, "/").len()
 }
 
 fun shared_dir(rel: string) -> bool {
@@ -427,7 +427,7 @@ public fun apply_transaction(ref items: ApplyItem[], overwrite: bool) -> string 
     for n in 0..items.len() {
         names.push(items[n].name + "-" + items[n].version)
     }
-    history_add(cast(now_secs(), "string") + " install " + txid + " " + str_join(names, ","))
+    history_add(cast(now_secs(), "string") + " install " + txid + " " + sjoin(names, ","))
     sync_disk()
     lock_release()
     return txid
@@ -439,7 +439,7 @@ public fun remove_package(name: string, force: bool) -> string {
     }
     set users = dependents_of(name)
     if users.len() > 0 && !force {
-        panic(err("required by: " + str_join(users, ", "), 733, name))
+        panic(err("required by: " + sjoin(users, ", "), 733, name))
     }
     lock_acquire()
     recover_interrupted()

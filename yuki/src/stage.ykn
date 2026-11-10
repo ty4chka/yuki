@@ -18,7 +18,7 @@ load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all, dir_remove_all
 load std.fs.defaults: dir_temp
 load std.outf: strip_ansi
-load std.strings: slice, split, str_join, eq, trim
+load std.strings: slice, eq, trim
 load .errors: YukiError, err
 load .config: state_dir
 load .priv: drop_privileges, kill_all_as, nobody_id, is_root
@@ -27,7 +27,7 @@ load .sysbuild: child_fetch
 load .pool: pool_paint, pool_ok
 load .verify: VerifyError
 load .view: InstallView
-load .util: now_ms, join2
+load .util: now_ms, join2, sjoin, str_split
 
 public fun stage_create() -> string {
     if !is_root() {
@@ -62,12 +62,12 @@ public fun stage_remove(stage: string) {
 
 // Корни установки: пишет родитель (root), читает ребёнок.
 public fun write_roots(stage: string, ref roots: string[]) {
-    file_write_text(join2(stage, "roots"), str_join(roots.cp(), "\n") + "\n")
+    file_write_text(join2(stage, "roots"), sjoin(roots.cp(), "\n") + "\n")
 }
 
 // Текст от ребёнка недоверенный: без управляющих последовательностей, одной строкой, обрезанный.
 fun clean_msg(s: string) -> string {
-    set one = str_join(split(strip_ansi(s), "\n"), " ")
+    set one = sjoin(str_split(strip_ansi(s), "\n"), " ")
     if one.len() > 300 {
         return slice(one, 0, 300) + "…"
     }

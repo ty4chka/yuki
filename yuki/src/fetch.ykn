@@ -9,12 +9,12 @@
 load core.utils: cast
 load core.panic: panic
 load std.net: tcp_connect, tls_connect, TlsStream
-load std.strings: split, trim, lower, slice, contains, eq, parse_int
+load std.strings: trim, slice, contains, eq, parse_int
 load std.fs.files: File, open_write, file_remove, file_write_text
 load std.stdotool.format: format_speed
 load .errors: YukiError, err
 load .config: host_allowed
-load .util: now_ms, str_starts, str_index
+load .util: now_ms, str_starts, str_index, str_lower, str_split
 
 public struct Response {
     status: int32
@@ -58,7 +58,7 @@ fun parse_target(url: string) -> Target {
     if authority.len() == 0 || contains(authority, "@") || contains(authority, ":") {
         panic(err("URL must be https://host/path (no userinfo, no port)", 402, url))
     }
-    set host = lower(authority)
+    set host = str_lower(authority)
     if !host_allowed(host) {
         panic(err("host is not on the allow-list: " + host, 403, url))
     }
@@ -74,7 +74,7 @@ fun header_value(ref hl: string[], name: string) -> string {
     for i in 1..hl.len() {
         set colon = str_index(hl[i], ":")
         if colon > 0 {
-            if eq(lower(trim(slice(hl[i], 0, colon))), name) {
+            if eq(str_lower(trim(slice(hl[i], 0, colon))), name) {
                 return trim(slice(hl[i], colon + 1, hl[i].len()))
             }
         }
@@ -95,7 +95,7 @@ fun read_chunk(ref ~tls: TlsStream) -> string {
 }
 
 fun hexval(ch: string) -> int64 {
-    return str_index("0123456789abcdef", lower(ch))
+    return str_index("0123456789abcdef", str_lower(ch))
 }
 
 fun parse_hex(s: string) -> int64 {
@@ -238,8 +238,8 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
         panic(err("connection closed before response headers", 406, url))
     }
 
-    set hl = split(head, "\r\n")
-    set sl = split(hl[0], " ")
+    set hl = str_split(head, "\r\n")
+    set sl = str_split(hl[0], " ")
     if sl.len() < 2 {
         panic(err("malformed HTTP status line", 406, url))
     }
@@ -249,7 +249,7 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
         return Response { status: status, location: location, body: "", received: 0 }
     }
 
-    set chunked = contains(lower(header_value(ref hl, "transfer-encoding")), "chunked")
+    set chunked = contains(str_lower(header_value(ref hl, "transfer-encoding")), "chunked")
     set clen: int64 = parse_int(header_value(ref hl, "content-length")) ?? -1
     if chunked {
         rewrite clen = -1

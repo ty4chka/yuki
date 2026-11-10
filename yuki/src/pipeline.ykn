@@ -6,8 +6,8 @@ load core.panic: panic
 load std.fs.files: file_exists, file_remove, file_rename, file_size
 load std.hash.blake3: blake3_file
 load std.stdotool.format: format_bytes
-load std.strings: slice, lower
-load .util: str_ends, join2
+load std.strings: slice
+load .util: str_ends, join2, str_lower
 load .errors: YukiError, err
 load .config: cache_dir, ensure_dirs, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, MAX_DOWNLOAD
 load .fetch: download, check_url
@@ -58,7 +58,7 @@ public fun fetch_verified(url: string, checksum: string, label: string, prog_pat
     check_url(url)
     ensure_dirs()
 
-    set hex = lower(slice(checksum, 7, 71))
+    set hex = str_lower(slice(checksum, 7, 71))
     set ext = archive_ext(url)
     set final_path = join2(cache_dir(), hex + ext)
 
@@ -101,7 +101,7 @@ public fun fetch_unpinned(url: string) -> string {
     set hex = ""
     sus {
         audit_tar(tmp, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, false)
-        rewrite hex = lower(blake3_file(tmp))
+        rewrite hex = str_lower(blake3_file(tmp))
     } catch e: VerifyError {
         file_remove(tmp)
         panic(e)

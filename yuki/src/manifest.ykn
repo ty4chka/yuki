@@ -5,8 +5,8 @@
 
 load core.panic: panic
 load std.fs.files: file_exists, file_read_text, file_write_text, file_rename
-load std.strings: lines, trim, slice, eq, str_join, split
-load .util: str_starts, str_index, str_index_from
+load std.strings: trim, slice, eq
+load .util: str_starts, str_index, str_index_from, sjoin, str_lines, str_split
 load .errors: YukiError, err
 
 static MANIFEST: string = "yuki.toml"
@@ -71,7 +71,7 @@ public fun dep_line(name: string, url: string, checksum: string, version: string
 
 // Добавить или заменить зависимость в [libs.runtime].
 public fun upsert_dep(name: string, line: string) {
-    set ls = lines(read_manifest())
+    set ls = str_lines(read_manifest())
     set out: string[] = []
     set in_section = false
     set had_section = false
@@ -108,11 +108,11 @@ public fun upsert_dep(name: string, line: string) {
         out.push(SECTION)
         out.push(line)
     }
-    write_manifest(str_join(out, "\n") + "\n")
+    write_manifest(sjoin(out, "\n") + "\n")
 }
 
 public fun remove_dep(name: string) -> bool {
-    set ls = lines(read_manifest())
+    set ls = str_lines(read_manifest())
     set out: string[] = []
     set in_section = false
     set removed = false
@@ -130,7 +130,7 @@ public fun remove_dep(name: string) -> bool {
         out.push(ls[i])
     }
     if removed {
-        write_manifest(str_join(out, "\n") + "\n")
+        write_manifest(sjoin(out, "\n") + "\n")
     }
     return removed
 }
@@ -138,7 +138,7 @@ public fun remove_dep(name: string) -> bool {
 // Зависимости, которыми управляет yuki (строки с маркером "# yuki:").
 public fun list_deps() -> Dep[] {
     set out: Dep[] = []
-    set ls = lines(read_manifest())
+    set ls = str_lines(read_manifest())
     set in_section = false
     for i in 0..ls.len() {
         set t = trim(ls[i])
@@ -153,7 +153,7 @@ public fun list_deps() -> Dep[] {
             set n = line_name(t)
             set m = str_index(t, "# yuki:")
             if n.len() > 0 && m >= 0 {
-                set tail = split(trim(slice(t, m + 7, t.len())), " ")
+                set tail = str_split(trim(slice(t, m + 7, t.len())), " ")
                 set via = ""
                 if tail.len() >= 3 && eq(tail[1], "via") {
                     rewrite via = tail[2]
@@ -176,7 +176,7 @@ public fun merge_via(existing: string, add: string) -> string {
     if add.len() == 0 {
         return existing
     }
-    set parts = split(existing, ",")
+    set parts = str_split(existing, ",")
     for i in 0..parts.len() {
         if eq(parts[i], add) {
             return existing
@@ -190,17 +190,17 @@ public fun merge_via(existing: string, add: string) -> string {
 
 fun without_owner(via: string, owner: string) -> string {
     set out: string[] = []
-    set parts = split(via, ",")
+    set parts = str_split(via, ",")
     for i in 0..parts.len() {
         if parts[i].len() > 0 && !eq(parts[i], owner) {
             out.push(parts[i])
         }
     }
-    return str_join(out, ",")
+    return sjoin(out, ",")
 }
 
 fun has_owner(via: string, owner: string) -> bool {
-    set parts = split(via, ",")
+    set parts = str_split(via, ",")
     for i in 0..parts.len() {
         if eq(parts[i], owner) {
             return true

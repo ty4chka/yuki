@@ -14,7 +14,7 @@ load std.hash.blake3: blake3_file
 load std.outf: supports_truecolor
 load std.process: run
 load std.stdotool.format: format_bytes
-load std.strings: eq, lower, trim, lines, split, str_join, contains, slice, pad_end, parse_int
+load std.strings: eq, trim, contains, slice, parse_int
 load .errors: YukiError, err
 load .config: config_dir, state_dir, cache_dir, index_url, host_target, system_mode, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .ui: ok, info, warn, bad, kv, c_accent, c_good, c_warn, c_bad, c_dim, c_bold
@@ -33,7 +33,7 @@ load .index: seen_get, seen_set
 load .fetch: http_text
 load .explain: explain_lines
 load .cmdlist: help_lines, suggest, completion_script
-load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2
+load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2, sjoin, str_lines, str_lower, str_pad_end, str_split
 
 fun yn(b: bool) -> string {
     if b {
@@ -109,12 +109,12 @@ public fun cmd_show(spec: string) {
     if eq(act, "bin") || eq(act, "installed") {
         kv("install", "prebuilt binary for " + host_target())
     } elif eq(act, "src") {
-        kv("install", "no binary for " + host_target() + ", builds from source: " + str_join(nodes[0].rel.build, " "))
+        kv("install", "no binary for " + host_target() + ", builds from source: " + sjoin(nodes[0].rel.build, " "))
     } else {
         kv("install", "not available for " + host_target())
     }
     if nodes[0].rel.deps.len() > 0 {
-        kv("depends", str_join(nodes[0].rel.deps, ", "))
+        kv("depends", sjoin(nodes[0].rel.deps, ", "))
     } else {
         kv("depends", "none")
     }
@@ -141,7 +141,7 @@ public fun cmd_outdated() {
         set nodes = plan_for(names[i], "")
         if valid_version(cur) && valid_version(nodes[0].rel.version) {
             if ver_cmp(nodes[0].rel.version, cur) > 0 {
-                println("  " + c_accent(pad_end(names[i], 20)) + c_dim(cur + " " + sym("arrow") + " ") + c_good(nodes[0].rel.version))
+                println("  " + c_accent(str_pad_end(names[i], 20)) + c_dim(cur + " " + sym("arrow") + " ") + c_good(nodes[0].rel.version))
                 rewrite found += 1
             }
         }
@@ -195,12 +195,12 @@ fun verified_catalog() -> string {
 public fun cmd_search(term: string) {
     set doc = json_parse(verified_catalog())
     set pk = doc.get("packages")
-    set q = lower(term)
+    set q = str_lower(term)
     set shown: int64 = 0
     for i in 0..pk.len() {
         set nm = pk.at(i).get("name").as_string_or("")
         set sm = pk.at(i).get("summary").as_string_or("")
-        if contains(lower(nm), q) || contains(lower(sm), q) {
+        if contains(str_lower(nm), q) || contains(str_lower(sm), q) {
             set mark = ""
             if db_has(nm) {
                 rewrite mark = " " + c_good("[installed]")
@@ -230,14 +230,14 @@ public fun cmd_list(filter: string) {
         } elif eq(filter, "deps") {
             rewrite pass = eq(r.reason, "dep")
         } elif filter.len() > 0 {
-            rewrite pass = contains(lower(r.name), lower(filter)) || contains(lower(r.summary), lower(filter))
+            rewrite pass = contains(str_lower(r.name), str_lower(filter)) || contains(str_lower(r.summary), str_lower(filter))
         }
         if pass {
             set why = "explicit"
             if eq(r.reason, "dep") {
                 rewrite why = "dependency"
             }
-            println("  " + c_accent(pad_end(r.name, 20)) + c_good(pad_end(r.version, 10)) + c_dim(pad_end(why, 12) + r.origin))
+            println("  " + c_accent(str_pad_end(r.name, 20)) + c_good(str_pad_end(r.version, 10)) + c_dim(str_pad_end(why, 12) + r.origin))
             if r.summary.len() > 0 {
                 println("      " + c_dim(r.summary))
             }
@@ -263,7 +263,7 @@ public fun cmd_orphans() {
 
 fun dep_names(name: string) -> string[] {
     set out: string[] = []
-    set ds = split(db_read(name).deps, ",")
+    set ds = str_split(db_read(name).deps, ",")
     for i in 0..ds.len() {
         if ds[i].len() > 0 {
             out.push(ds[i])
@@ -367,7 +367,7 @@ public fun cmd_why(name: string) {
     set r = db_read(name)
     set users = dependents_of(name)
     if users.len() > 0 {
-        ok(name + " is needed by " + c_accent(str_join(users.cp(), ", ")))
+        ok(name + " is needed by " + c_accent(sjoin(users.cp(), ", ")))
     }
     if !eq(r.reason, "dep") {
         ok(name + " was installed explicitly")
@@ -546,7 +546,7 @@ public fun cmd_hold(name: string) {
     dir_create_all(config_dir())
     set h = held_names()
     h.push(name)
-    file_write_text(join2(config_dir(), "hold"), str_join(h, "\n") + "\n")
+    file_write_text(join2(config_dir(), "hold"), sjoin(h, "\n") + "\n")
     ok(name + " is held at " + db_read(name).version + ": upgrade will skip it")
 }
 
@@ -562,7 +562,7 @@ public fun cmd_unhold(name: string) {
             out.push(h[i])
         }
     }
-    file_write_text(join2(config_dir(), "hold"), str_join(out, "\n") + "\n")
+    file_write_text(join2(config_dir(), "hold"), sjoin(out, "\n") + "\n")
     if found {
         ok(name + " is no longer held")
     } else {
@@ -584,7 +584,7 @@ public fun cmd_import(file: string) {
     if !file_exists(file) {
         panic(err("file not found: " + file, 501, file))
     }
-    set ls = lines(file_read_text(file))
+    set ls = str_lines(file_read_text(file))
     for i in 0..ls.len() {
         set l = trim(ls[i])
         if l.len() > 0 && !str_starts(l, "#") {
@@ -596,7 +596,7 @@ public fun cmd_import(file: string) {
 // ── справка ─────────────────────────────────────────────────────────────
 
 public fun cmd_explain(code: string) {
-    set raw = lower(trim(code))
+    set raw = str_lower(trim(code))
     if str_starts(raw, "y") {
         rewrite raw = slice(raw, 1, raw.len())
     }

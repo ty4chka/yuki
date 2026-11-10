@@ -9,8 +9,8 @@ load core.panic: panic
 load std.fs.files: file_exists, file_read_text, file_write_text, file_append_text
 load std.fs.dirs: dir_create_all, dir_exists, dir_list, dir_remove_all
 load std.fs.paths: path_file_name
-load std.strings: lines, split, trim, eq, slice, str_join, parse_int
-load .util: str_index, join2
+load std.strings: trim, eq, slice, parse_int
+load .util: str_index, join2, sjoin, str_lines, str_split
 load .errors: YukiError, err
 load .config: state_dir, config_dir
 
@@ -65,7 +65,7 @@ public fun db_read(name: string) -> PkgRecord {
     if !file_exists(f) {
         panic(err("package is not installed: " + name, 710, name))
     }
-    set ls = lines(file_read_text(f))
+    set ls = str_lines(file_read_text(f))
     return PkgRecord {
         name: kv_get(ls, "name"),
         version: kv_get(ls, "version"),
@@ -93,8 +93,8 @@ public fun db_write(rec: PkgRecord, ref files: string[]) {
         "reason=" + rec.reason,
         "summary=" + rec.summary
     ]
-    file_write_text(join2(db_dir(rec.name), "desc"), str_join(d, "\n") + "\n")
-    file_write_text(join2(db_dir(rec.name), "files"), str_join(files.cp(), "\n") + "\n")
+    file_write_text(join2(db_dir(rec.name), "desc"), sjoin(d, "\n") + "\n")
+    file_write_text(join2(db_dir(rec.name), "files"), sjoin(files.cp(), "\n") + "\n")
 }
 
 public fun db_files(name: string) -> string[] {
@@ -103,7 +103,7 @@ public fun db_files(name: string) -> string[] {
     if !file_exists(f) {
         return out
     }
-    set ls = lines(file_read_text(f))
+    set ls = str_lines(file_read_text(f))
     for i in 0..ls.len() {
         if trim(ls[i]).len() > 0 {
             out.push(trim(ls[i]))
@@ -118,19 +118,19 @@ public fun db_remove(name: string) {
 
 // разбор строки files
 public fun f_hash(line: string) -> string {
-    return split(line, " ")[0]
+    return str_split(line, " ")[0]
 }
 
 public fun f_mode(line: string) -> string {
-    return split(line, " ")[1]
+    return str_split(line, " ")[1]
 }
 
 public fun f_kind(line: string) -> string {
-    return split(line, " ")[2]
+    return str_split(line, " ")[2]
 }
 
 public fun f_path(line: string) -> string {
-    set p = split(line, " ")
+    set p = str_split(line, " ")
     return p[3]
 }
 
@@ -154,7 +154,7 @@ public fun dependents_of(name: string) -> string[] {
     set names = db_names()
     for i in 0..names.len() {
         set rec = db_read(names[i])
-        set ds = split(rec.deps, ",")
+        set ds = str_split(rec.deps, ",")
         for j in 0..ds.len() {
             if eq(ds[j], name) {
                 out.push(names[i])
@@ -174,7 +174,7 @@ public fun held_names() -> string[] {
     set out: string[] = []
     set f = join2(config_dir(), "hold")
     if file_exists(f) {
-        set ls = lines(file_read_text(f))
+        set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
             if trim(ls[i]).len() > 0 {
                 out.push(trim(ls[i]))

@@ -1,7 +1,7 @@
 // util.ykn — время, валидация имён/версий/hex.
 
 load std.datetime: now_utc, to_unix_secs, to_unix_millis
-load std.strings: split, parse_int, slice, contains, eq
+load std.strings: split, lines, lower, pad_end, repeat, str_join, parse_int, slice, contains, eq
 // В актуальном std эти функции возвращают T? (bool?/int64?), а проект работает
 // с обычными bool/int64. Обёртки дают прежнюю семантику: null → false / -1.
 // ВАЖНО: имена обёрток НЕ должны совпадать с std (str_*), иначе компилятор
@@ -79,7 +79,7 @@ public fun valid_version(v: string) -> bool {
     if v.len() == 0 || v.len() > 32 {
         return false
     }
-    set parts = split(v, ".")
+    set parts = str_split(v, ".")
     if parts.len() != 3 {
         return false
     }
@@ -112,8 +112,8 @@ public fun digits_val(s: string) -> int64 {
 }
 
 public fun ver_cmp(a: string, b: string) -> int64 {
-    set pa = split(a, ".")
-    set pb = split(b, ".")
+    set pa = str_split(a, ".")
+    set pb = str_split(b, ".")
     set r: int64 = 0
     for i in 0..3 {
         if r == 0 {
@@ -131,16 +131,16 @@ public fun ver_cmp(a: string, b: string) -> int64 {
 
 // "имя@1.2.3" — зависимость с точным закреплением версии
 public fun valid_dep_spec(s: string) -> bool {
-    set p = split(s, "@")
+    set p = str_split(s, "@")
     return p.len() == 2 && valid_name(p[0]) && valid_version(p[1])
 }
 
 public fun dep_name(s: string) -> string {
-    return split(s, "@")[0]
+    return str_split(s, "@")[0]
 }
 
 public fun dep_version(s: string) -> string {
-    return split(s, "@")[1]
+    return str_split(s, "@")[1]
 }
 
 // Для подсказки «did you mean»: число правок между словами.
@@ -169,4 +169,41 @@ public fun edit_distance(a: string, b: string) -> int64 {
         rewrite prev = cur
     }
     return prev[b.len()]
+}
+
+// ---------------------------------------------------------------------------
+// Копирующие обёртки над std.strings.
+// std split/lines/lower/pad_end/repeat/str_join возвращают указатель на ОДИН общий
+// потоковый буфер: следующий вызов затирает предыдущий результат (eq(lower(a), lower(b))
+// всегда истинно, два живых split портят друг друга). Здесь результат сразу копируется
+// в регион вызывающего: массив через .cp(), строка через конкатенацию.
+// ---------------------------------------------------------------------------
+public fun str_split(s: string, delim: string) -> string[] {
+    set r: string[] = split(s, delim)
+    return r.cp()
+}
+
+public fun str_lines(s: string) -> string[] {
+    set r: string[] = lines(s)
+    return r.cp()
+}
+
+public fun str_lower(s: string) -> string {
+    set r: string = lower(s)
+    return r + ""
+}
+
+public fun str_pad_end(s: string, width: int64, pad: string = " ") -> string {
+    set r: string = pad_end(s, width, pad)
+    return r + ""
+}
+
+public fun str_repeat(s: string, n: int64) -> string {
+    set r: string = repeat(s, n)
+    return r + ""
+}
+
+public fun sjoin(items: string[], delim: string = "") -> string {
+    set r: string = str_join(items, delim)
+    return r + ""
 }

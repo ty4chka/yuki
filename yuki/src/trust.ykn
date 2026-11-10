@@ -7,12 +7,12 @@ load core.panic: panic
 load std.io: print, println, read_line
 load std.fs.dirs: dir_create_all
 load std.fs.files: file_exists, file_read_text, file_write_text, file_append_text, file_set_permissions
-load std.strings: lines, split, trim, eq, lower, slice, str_join, parse_int
+load std.strings: trim, eq, slice, parse_int
 load std.hash: hex_to_bytes, bytes_to_hex, blake3_str
 load std.crypto: ed25519_public_key, ed25519_sign, random_bytes
 load .errors: YukiError, err
 load .config: config_dir, ensure_dirs
-load .util: is_hex, valid_name, join2
+load .util: is_hex, valid_name, join2, sjoin, str_lines, str_lower, str_split
 load .verify: signed_message
 
 fun trust_file() -> string {
@@ -32,9 +32,9 @@ public fun is_revoked(pubkey_hex: string) -> bool {
     if !file_exists(f) {
         return false
     }
-    set ls = lines(file_read_text(f))
+    set ls = str_lines(file_read_text(f))
     for i in 0..ls.len() {
-        if eq(lower(trim(ls[i])), lower(pubkey_hex)) {
+        if eq(str_lower(trim(ls[i])), str_lower(pubkey_hex)) {
             return true
         }
     }
@@ -46,11 +46,11 @@ public fun trusted_keys() -> string[] {
     set out: string[] = []
     set f = trust_file()
     if file_exists(f) {
-        set ls = lines(file_read_text(f))
+        set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
-            set parts = split(trim(ls[i]), " ")
+            set parts = str_split(trim(ls[i]), " ")
             if parts.len() >= 2 && parts[1].len() == 64 && is_hex(parts[1]) && !is_revoked(parts[1]) {
-                out.push(lower(parts[1]))
+                out.push(str_lower(parts[1]))
             }
         }
     }
@@ -70,21 +70,21 @@ public fun threshold() -> int64 {
 }
 
 public fun revoke_key(pubkey_hex: string) {
-    set key = lower(pubkey_hex)
+    set key = str_lower(pubkey_hex)
     if !is_revoked(key) {
         file_append_text(revoked_file(), key + "\n")
     }
     set f = trust_file()
     if file_exists(f) {
         set out: string[] = []
-        set ls = lines(file_read_text(f))
+        set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
-            set parts = split(trim(ls[i]), " ")
-            if !(parts.len() >= 2 && eq(lower(parts[1]), key)) && trim(ls[i]).len() > 0 {
+            set parts = str_split(trim(ls[i]), " ")
+            if !(parts.len() >= 2 && eq(str_lower(parts[1]), key)) && trim(ls[i]).len() > 0 {
                 out.push(trim(ls[i]))
             }
         }
-        file_write_text(f, str_join(out, "\n") + "\n")
+        file_write_text(f, sjoin(out, "\n") + "\n")
     }
 }
 
@@ -92,9 +92,9 @@ public fun trusted_names() -> string[] {
     set out: string[] = []
     set f = trust_file()
     if file_exists(f) {
-        set ls = lines(file_read_text(f))
+        set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
-            set parts = split(trim(ls[i]), " ")
+            set parts = str_split(trim(ls[i]), " ")
             if parts.len() >= 2 && parts[1].len() == 64 && is_hex(parts[1]) && !is_revoked(parts[1]) {
                 out.push(parts[0])
             }
@@ -109,9 +109,9 @@ public fun trusted_roles() -> string[] {
     set out: string[] = []
     set f = trust_file()
     if file_exists(f) {
-        set ls = lines(file_read_text(f))
+        set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
-            set parts = split(trim(ls[i]), " ")
+            set parts = str_split(trim(ls[i]), " ")
             if parts.len() >= 2 && parts[1].len() == 64 && is_hex(parts[1]) && !is_revoked(parts[1]) {
                 if parts.len() >= 3 && eq(parts[2], "renewer") {
                     out.push("renewer")
@@ -138,7 +138,7 @@ public fun publish_threshold() -> int64 {
 
 // Отпечаток для сверки глазами: первые 16 hex от BLAKE3(pubkey_hex).
 public fun fingerprint(pubkey_hex: string) -> string {
-    set h = blake3_str(lower(pubkey_hex))
+    set h = blake3_str(str_lower(pubkey_hex))
     return slice(h, 0, 4) + " " + slice(h, 4, 8) + " " + slice(h, 8, 12) + " " + slice(h, 12, 16)
 }
 
@@ -152,7 +152,7 @@ public fun trust_add(name: string, pubkey_hex: string, role: string, assume_yes:
     if pubkey_hex.len() != 64 || !is_hex(pubkey_hex) {
         panic(err("public key must be 64 hex characters", 601, name))
     }
-    set key = lower(pubkey_hex)
+    set key = str_lower(pubkey_hex)
     if is_revoked(key) {
         panic(err("this key was revoked and cannot be trusted again", 606, name))
     }
@@ -168,7 +168,7 @@ public fun trust_add(name: string, pubkey_hex: string, role: string, assume_yes:
     println("  role         " + role)
     if !assume_yes {
         print("  trust this key for signing index entries? [y/N] ")
-        set answer = lower(trim(read_line()))
+        set answer = str_lower(trim(read_line()))
         if !eq(answer, "y") && !eq(answer, "yes") {
             panic(err("aborted: key was not trusted", 603, name))
         }
@@ -184,16 +184,16 @@ public fun trust_remove(name: string) -> bool {
     }
     set out: string[] = []
     set found = false
-    set ls = lines(file_read_text(f))
+    set ls = str_lines(file_read_text(f))
     for i in 0..ls.len() {
-        set parts = split(trim(ls[i]), " ")
+        set parts = str_split(trim(ls[i]), " ")
         if parts.len() >= 2 && eq(parts[0], name) {
             rewrite found = true
         } elif trim(ls[i]).len() > 0 {
             out.push(trim(ls[i]))
         }
     }
-    file_write_text(f, str_join(out, "\n") + "\n")
+    file_write_text(f, sjoin(out, "\n") + "\n")
     return found
 }
 

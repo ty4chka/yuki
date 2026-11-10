@@ -4,8 +4,8 @@ load core.utils: cast
 load core.panic: panic
 load core.process: exit, args
 load std.io: println
-load std.strings: eq, slice, str_join, parse_int
-load .util: str_starts
+load std.strings: eq, slice, parse_int
+load .util: str_starts, sjoin
 load std.env: get_or, set_env
 load std.fs.archives.tar: TarError
 load .ui: banner, diag_error, warn, c_dim, c_accent
@@ -238,7 +238,7 @@ fun run_system(ref argv: string[]) -> bool {
     } elif eq(cmd, "outdated") && n == 1 {
         cmd_outdated()
     } elif eq(cmd, "search") && n >= 2 {
-        cmd_search(str_join(rest_of(ref argv), " "))
+        cmd_search(sjoin(rest_of(ref argv), " "))
     } elif eq(cmd, "show") && n == 2 {
         cmd_show(argv[1])
     } elif eq(cmd, "check") && n <= 2 {

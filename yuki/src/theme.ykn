@@ -20,12 +20,12 @@ load core.utils: cast
 load std.io: is_stdout_terminal
 load std.env: get_or, set_env, has_env
 load std.outf: Styled, style, supports_truecolor
-load std.strings: split, eq, lower, contains, slice, parse_int, str_join
+load std.strings: eq, contains, slice, parse_int
 load std.toml: parse, validate
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all
 load .config: config_dir
-load .util: is_hex, str_starts, str_index, join2
+load .util: is_hex, str_starts, str_index, join2, sjoin, str_lower, str_split
 
 public fun theme_path() -> string {
     set p = get_or("YUKI_THEME_FILE", "")
@@ -120,7 +120,7 @@ fun detect_unicode() -> bool {
     if has_env("WT_SESSION") {
         return true
     }
-    set loc = lower(get_or("LC_ALL", "") + " " + get_or("LC_CTYPE", "") + " " + get_or("LANG", ""))
+    set loc = str_lower(get_or("LC_ALL", "") + " " + get_or("LC_CTYPE", "") + " " + get_or("LANG", ""))
     return contains(loc, "utf-8") || contains(loc, "utf8")
 }
 
@@ -143,8 +143,8 @@ public fun theme_init() {
     }
     set doc = parse(src)
 
-    set palette = lower(doc.get("palette").as_string_or("rgb"))
-    set from_env = lower(get_or("YUKI_PALETTE", ""))
+    set palette = str_lower(doc.get("palette").as_string_or("rgb"))
+    set from_env = str_lower(get_or("YUKI_PALETTE", ""))
     if from_env.len() > 0 {
         rewrite palette = from_env
     }
@@ -206,13 +206,13 @@ public fun sym(name: string) -> string {
 }
 
 public fun spinner_frames() -> string[] {
-    return split(sym("spinner"), " ")
+    return str_split(sym("spinner"), " ")
 }
 
 // ── раскраска ───────────────────────────────────────────────────────────
 
 fun theme_hexval(ch: string) -> int32 {
-    set i = str_index("0123456789abcdef", lower(ch))
+    set i = str_index("0123456789abcdef", str_lower(ch))
     if i < 0 {
         return 0
     }
@@ -302,7 +302,7 @@ fun apply_spec(spec: string, text: string) -> string {
     if spec.len() == 0 {
         return text
     }
-    set parts = split(spec, "+")
+    set parts = str_split(spec, "+")
     set base = parts[0]
     set bold = false
     set dimf = eq(base, "dim")
@@ -322,7 +322,7 @@ public fun paint(role: string, text: string) -> string {
 }
 
 fun base_of(spec: string) -> string {
-    return split(spec, "+")[0]
+    return str_split(spec, "+")[0]
 }
 
 // Цвет i-й ячейки полосы: плавный переход accent → good, если оба заданы как #rrggbb
@@ -383,7 +383,7 @@ public fun theme_template() -> string {
         "# spinner = \"◐ ◓ ◑ ◒\"",
         "# bar_full = \"█\""
     ]
-    return str_join(l, "\n") + "\n"
+    return sjoin(l, "\n") + "\n"
 }
 
 public fun theme_write_template() -> string {

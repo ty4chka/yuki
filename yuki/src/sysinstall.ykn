@@ -19,7 +19,7 @@ load std.fs.archives.tar: tar_unpack, tar_list, TarError
 load std.hash.blake3: blake3_file
 load std.process: run
 load std.stdotool.format: format_bytes
-load std.strings: eq, lower, trim, str_join, parse_int, lines, contains, slice, pad_end, split
+load std.strings: eq, trim, parse_int, contains, slice
 load .errors: YukiError, err
 load .config: state_dir, host_target, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .view: InstallView
@@ -33,7 +33,7 @@ load .pipeline: archive_ext
 load .verify: VerifyError, check_blake3, audit_tar
 load .apply: ApplyItem, apply_transaction, remove_package, rollback_locked, check_package
 load .sysdb: PkgRecord, is_held, is_explicit, mark_explicit, orphans, dependents_of, db_names, db_read, db_has, db_files, owner_of, f_kind, f_path, history_add
-load .util: now_ms, valid_name, valid_version, dep_name, str_starts, str_ends, join2
+load .util: now_ms, valid_name, valid_version, dep_name, str_starts, str_ends, join2, sjoin, str_lines, str_lower, str_pad_end, str_split
 
 fun sys_need_root() {
     if !is_root() {
@@ -51,7 +51,7 @@ fun ask(question: string, default_yes: bool) -> bool {
         rewrite hint = "[Y/n]"
     }
     print("  " + c_accent("::") + " " + question + " " + c_dim(hint) + " ")
-    set answer = lower(trim(read_line()))
+    set answer = str_lower(trim(read_line()))
     if answer.len() == 0 {
         return default_yes
     }
@@ -89,7 +89,7 @@ fun approve_builds(stage: string, ref nodes: PNode[]) {
         }
         set name = nodes[i].rel.name
         warn(name + " has no binary for " + host_target() + ": it has to be built here")
-        kv("build", str_join(nodes[i].rel.build, " "))
+        kv("build", sjoin(nodes[i].rel.build, " "))
         kv("packages", cast(nodes[i].rel.files.len(), "string") + " files, listed in the signed index")
         if nodes[i].rel.src_net {
             kv("network", "ALLOWED by this package")
@@ -99,7 +99,7 @@ fun approve_builds(stage: string, ref nodes: PNode[]) {
         kv("sandbox", policy)
         set pinned = true
         for q in 0..nodes[i].rel.files.len() {
-            set fp = split(nodes[i].rel.files[q], "|")
+            set fp = str_split(nodes[i].rel.files[q], "|")
             if fp.len() < 4 || fp[3].len() == 0 {
                 rewrite pinned = false
             }
@@ -124,7 +124,7 @@ fun approve_builds(stage: string, ref nodes: PNode[]) {
         }
         approved.push(name)
     }
-    file_write_text(join2(stage, "approved"), str_join(approved, "\n") + "\n")
+    file_write_text(join2(stage, "approved"), sjoin(approved, "\n") + "\n")
 }
 
 // ── проверка принесённого root'ом ───────────────────────────────────────
@@ -205,7 +205,7 @@ fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 
         if eq(origin, "source") {
             set pinned = true
             for q in 0..nodes[i].rel.files.len() {
-                set fp = split(nodes[i].rel.files[q], "|")
+                set fp = str_split(nodes[i].rel.files[q], "|")
                 if fp.len() > 3 && fp[3].len() > 0 {
                     check_blake3(join2(root_dir, fp[1]), fp[3])
                 } else {
@@ -234,7 +234,7 @@ fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 
             checksum: checksum,
             signer: nodes[i].rel.signer,
             origin: origin,
-            deps: str_join(deps, ","),
+            deps: sjoin(deps, ","),
             root: root_dir,
             reason: reason,
             summary: nodes[i].rel.summary,
@@ -251,7 +251,7 @@ fun root_names(ref roots: string[]) -> string {
     for i in 0..roots.len() {
         names.push(spec_name(roots[i]))
     }
-    return str_join(names, ", ")
+    return sjoin(names, ", ")
 }
 
 // Один общий план и одна транзакция для всех корней (install a b c, upgrade).
@@ -396,7 +396,7 @@ public fun cmd_sys_install(spec: string) {
 
 // Убрать зависимости удалённого пакета, которые больше никому не нужны (-Rs).
 fun remove_unneeded(deps_csv: string) {
-    set ds = split(deps_csv, ",")
+    set ds = str_split(deps_csv, ",")
     for i in 0..ds.len() {
         if ds[i].len() > 0 && db_has(ds[i]) && !is_explicit(ds[i]) && dependents_of(ds[i]).len() == 0 {
             set sub = db_read(ds[i]).deps
@@ -414,7 +414,7 @@ public fun cmd_sys_uninstall(name: string, force: bool) {
     println("  " + c_accent("::") + " Remove " + c_bold(rec.name) + " " + c_good(rec.version) + " (" + cast(db_files(name).len(), "string") + " files)")
     set dependents = dependents_of(name)
     if dependents.len() > 0 {
-        warn("required by: " + str_join(dependents, ", "))
+        warn("required by: " + sjoin(dependents, ", "))
     }
     if flag("YUKI_RECURSIVE") && rec.deps.len() > 0 {
         info("unneeded dependencies will go too: " + rec.deps)
@@ -519,7 +519,7 @@ public fun cmd_sys_upgrade(only: string) {
     println("")
     println("  " + c_accent("::") + " " + c_bold("Upgrades") + " (" + cast(todo.len(), "string") + ")")
     for i in 0..todo.len() {
-        println("    " + c_good("+") + " " + c_bold(pad_end(todo[i], 18)) + c_dim(news[i]))
+        println("    " + c_good("+") + " " + c_bold(str_pad_end(todo[i], 18)) + c_dim(news[i]))
     }
     println("")
     if !flag("YUKI_YES") {
@@ -541,7 +541,7 @@ public fun cmd_sys_list() {
     }
     for i in 0..names.len() {
         set r = db_read(names[i])
-        println("  " + c_accent(pad_end(r.name, 20)) + c_good(pad_end(r.version, 10)) + c_dim(r.origin))
+        println("  " + c_accent(str_pad_end(r.name, 20)) + c_good(str_pad_end(r.version, 10)) + c_dim(r.origin))
     }
 }
 
@@ -626,7 +626,7 @@ public fun cmd_sys_history() {
         info("no transactions yet")
         return
     }
-    set ls = lines(file_read_text(f))
+    set ls = str_lines(file_read_text(f))
     for i in 0..ls.len() {
         if trim(ls[i]).len() > 0 {
             println("  " + c_dim(trim(ls[i])))

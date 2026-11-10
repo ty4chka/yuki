@@ -5,9 +5,10 @@ load core.utils: cast
 load std.io: println, eprintln
 load std.outf: style, visible_len
 load std.stdotool.format: format_bytes, format_percent
-load std.strings: repeat, parse_int, slice, split, str_join
+load std.strings: parse_int, slice
 load .theme: paint, sym, grad
 load .explain: has_explain
+load .util: sjoin, str_repeat, str_split
 
 // ── палитра ─────────────────────────────────────────────────────────────
 
@@ -47,7 +48,7 @@ public fun banner(version: string) {
 }
 
 public fun rule(width: int64) -> string {
-    return c_dim(repeat(sym("rule"), width))
+    return c_dim(str_repeat(sym("rule"), width))
 }
 
 public fun ok(msg: string) {
@@ -102,7 +103,7 @@ public fun diag_error(code: string, title: string, location: string, help: strin
     set num: int64 = parse_int(slice(code, 1, code.len())) ?? 0
     set tails: string[] = []
     if help.len() > 0 {
-        tails.push(c_good("help") + ": " + str_join(split(help, "\n"), "\n         "))
+        tails.push(c_good("help") + ": " + sjoin(str_split(help, "\n"), "\n         "))
     }
     if has_explain(num) {
         tails.push(c_accent("note") + ": run `yuki explain " + code + "` for details")
@@ -136,11 +137,11 @@ public fun card(ref rows: string[]) {
         }
     }
     set pipe = c_dim(sym("pipe"))
-    println("  " + c_dim(sym("tl") + repeat(sym("rule"), w + 2) + sym("tr")))
+    println("  " + c_dim(sym("tl") + str_repeat(sym("rule"), w + 2) + sym("tr")))
     for i in 0..rows.len() {
-        println("  " + pipe + " " + rows[i] + repeat(" ", w - visible_len(rows[i])) + " " + pipe)
+        println("  " + pipe + " " + rows[i] + str_repeat(" ", w - visible_len(rows[i])) + " " + pipe)
     }
-    println("  " + c_dim(sym("bl") + repeat(sym("rule"), w + 2) + sym("br")))
+    println("  " + c_dim(sym("bl") + str_repeat(sym("rule"), w + 2) + sym("br")))
 }
 
 // ── прогресс ────────────────────────────────────────────────────────────
