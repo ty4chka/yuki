@@ -9,6 +9,8 @@ load core.panic: panic
 load core.process: exit
 load core.mem: ptr_of
 load std.os.unix: fork, waitpid, kill, geteuid
+load std.env: get_env
+load std.strings: eq, trim
 load .errors: YukiError, err
 
 cfun setgroups(size: c_size_t, list: ptr<c_uint>) -> c_int;
@@ -27,8 +29,21 @@ public fun nobody_id() -> c_uint {
     return id
 }
 
+// proot не изолирует uid: geteuid()==0 и setuid() отчитываются об успехе,
+// но процесс остаётся с прежними правами, и kill(-1) убивает весь сеанс
+// (включая Termux). В таком окружении фазу разделения привилегий пропускаем.
+public fun enc_is_proot() -> bool {
+    if eq(trim(get_env("PROOT_TMP_DIR")), "") && eq(trim(get_env("PROOT_NO_SECCOMP")), "") && eq(trim(get_env("PROOT_LOADER")), "") {
+        return false
+    }
+    return true
+}
+
 public fun drop_privileges(uid: c_uint, gid: c_uint) {
     if !is_root() {
+        return
+    }
+    if enc_is_proot() {
         return
     }
     set none: c_size_t = 0
@@ -54,8 +69,12 @@ public fun drop_privileges(uid: c_uint, gid: c_uint) {
 
 // Убить все процессы пользователя uid: после ребёнка не должно остаться демонов,
 // которые продолжили бы менять файлы, пока root их проверяет.
+// kill(-1) допустим только в настоящем окружении с разделением uid.
 public fun kill_all_as(uid: c_uint) {
     if !is_root() {
+        return
+    }
+    if enc_is_proot() {
         return
     }
     set pid = fork()
