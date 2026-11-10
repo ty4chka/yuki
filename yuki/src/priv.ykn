@@ -9,7 +9,7 @@ load core.panic: panic
 load core.process: exit
 load core.mem: ptr_of
 load std.os.unix: fork, waitpid, kill, geteuid
-load std.env: get_env
+load std.env: get_or
 load std.strings: eq, trim
 load .errors: YukiError, err
 
@@ -33,7 +33,7 @@ public fun nobody_id() -> c_uint {
 // но процесс остаётся с прежними правами, и kill(-1) убивает весь сеанс
 // (включая Termux). В таком окружении фазу разделения привилегий пропускаем.
 public fun enc_is_proot() -> bool {
-    if eq(trim(get_env("PROOT_TMP_DIR")), "") && eq(trim(get_env("PROOT_NO_SECCOMP")), "") && eq(trim(get_env("PROOT_LOADER")), "") {
+    if eq(trim(get_or("PROOT_TMP_DIR", "")), "") && eq(trim(get_or("PROOT_NO_SECCOMP", "")), "") && eq(trim(get_or("PROOT_LOADER", "")), "") {
         return false
     }
     return true
