@@ -18,7 +18,7 @@ load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all, dir_remove_all
 load std.fs.defaults: dir_temp
 load std.outf: strip_ansi
-load std.strings: slice, eq, trim
+load std.strings: slice, eq, trim, parse_int
 load .errors: YukiError, err
 load .config: state_dir
 load .priv: drop_privileges, kill_all_as, nobody_id, is_root
@@ -96,11 +96,11 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
             }
             file_write_text(join2(dl, "DONE-" + mode), "ok")
         } catch e: YukiError {
-            file_write_text(join2(dl, "ERROR"), e.message)
+            file_write_text(join2(dl, "ERROR"), cast(e.code, "string") + "\n" + e.message)
         } catch e: VerifyError {
-            file_write_text(join2(dl, "ERROR"), e.message)
+            file_write_text(join2(dl, "ERROR"), cast(300 + e.code, "string") + "\n" + e.message)
         } catch {
-            file_write_text(join2(dl, "ERROR"), "unexpected failure: " + errkind)
+            file_write_text(join2(dl, "ERROR"), "751\nunexpected failure: " + errkind)
         }
         exit(0)
     }
@@ -130,9 +130,20 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
     kill_all_as(nobody_id())
     if !file_exists(join2(dl, "DONE-" + mode)) {
         set why = "the unprivileged step did not finish"
+        set code: int32 = 751
         if file_exists(join2(dl, "ERROR")) {
-            rewrite why = clean_msg(file_read_text(join2(dl, "ERROR")))
+            // формат: первая строка — код ошибки ребёнка, дальше текст.
+            // Текст недоверенный, а код влияет только на подсказку, поэтому берём лишь 100..999.
+            set raw = file_read_text(join2(dl, "ERROR"))
+            set l = str_split(raw, "\n")
+            set n: int64 = parse_int(trim(l[0])) ?? 0
+            if l.len() >= 2 && n >= 100 && n <= 999 {
+                rewrite code = cast(n, "int32")
+                rewrite why = clean_msg(slice(raw, l[0].len() + 1, raw.len()))
+            } else {
+                rewrite why = clean_msg(raw)
+            }
         }
-        panic(err(why, 751, mode))
+        panic(err(why, code, mode))
     }
 }
