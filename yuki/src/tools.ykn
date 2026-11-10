@@ -9,7 +9,6 @@ load std.env: get_or
 load std.json: json_parse
 load std.fs.files: file_exists, file_read_text, file_write_text, file_remove, file_metadata, file_size
 load std.fs.dirs: dir_exists, dir_walk, dir_remove_all, dir_create_all
-load std.fs.archives.tar: tar_pack_dir
 load std.hash.blake3: blake3_file
 load std.outf: supports_truecolor
 load std.process: run
@@ -29,11 +28,12 @@ load .sysinstall: cmd_sys_install, cmd_sys_install_many
 load .trust: trusted_keys, threshold
 load .verify: VerifyError, verify_text_with_any, audit_tar
 load .policy: policy_check
+load .tarpack: tar_pack_tree
 load .index: seen_get, seen_set
 load .fetch: http_text
 load .explain: explain_lines
 load .cmdlist: help_lines, suggest, completion_script
-load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2, sjoin, str_lines, str_lower, str_pad_end, str_split
+load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2, sjoin, str_lines, str_lower, str_pad_end, str_split, str_ends
 
 fun yn(b: bool) -> string {
     if b {
@@ -653,7 +653,11 @@ public fun cmd_completions(shell: string) {
 
 // ── сборка пакета ───────────────────────────────────────────────────────
 
-fun tools_strip_root(p: string, root: string) -> string {
+fun tools_strip_root(p: string, root_in: string) -> string {
+    set root: string = root_in
+    while root.len() > 1 && str_ends(root, "/") {
+        rewrite root = slice(root, 0, root.len() - 1)
+    }
     if str_starts(p, root + "/") {
         return slice(p, root.len() + 1, p.len())
     }
@@ -693,7 +697,7 @@ public fun cmd_pack(name: string, dir: string, out: string) {
     if problems > 0 {
         panic(err(cast(problems, "string") + " path(s) break the install policy", 721, dir))
     }
-    tar_pack_dir(out, dir, "auto")
+    tar_pack_tree(out, dir)
     set rep = audit_tar(out, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, true)
     set checksum = "blake3:" + blake3_file(out)
     ok("packed " + cast(count, "string") + " files " + c_dim("(" + format_bytes(file_size(out)) + ")"))

@@ -96,133 +96,6 @@ jobs:
           done
           [ "$ok" = "1" ] || { echo "yukino build release failed"; exit 1; }
 
-      - name: Diagnostic - which build flags break the binary
-        continue-on-error: true
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set +e
-          set -u
-          run_variant() {
-            name="$1"; shift
-            d="$RUNNER_TEMP/var_$name"
-            rm -rf "$d"; mkdir -p "$d"
-            cp -r "$PROJ_DIR"/. "$d"/
-            rm -rf "$d/yuki-work" "$d/build.log" "$d/clean.log"
-            for kv in "$@"; do
-              key="${kv%%=*}"; val="${kv#*=}"
-              sed -i -E "s|^${key} *=.*|${key} = ${val}|" "$d/yuki.toml"
-            done
-            ( cd "$d" && yukino build release > build.log 2>&1 ); brc=$?
-            BIN=$(find "$d/yuki-work" -type f \( -name yuki -o -name yuki_debug \) 2>/dev/null | head -1)
-            if [ -z "$BIN" ]; then echo "[$name] build rc=$brc, бинарь не найден"; tail -3 "$d/build.log"; return; fi
-            chmod +x "$BIN"
-            out=$(timeout 10 "$BIN" version < /dev/null 2>&1); rc=$?
-            echo "[$name] build rc=$brc, version rc=$rc: $(echo "$out" | head -2 | tr '\n' '|')"
-          }
-          echo "базовый yuki.toml:"; sed -n '/config.release/,/^$/p' "$PROJ_DIR/yuki.toml"
-          run_variant base
-          run_variant no_lto lto=false
-          run_variant no_strip_unused strip_unused=false
-          run_variant no_inline_statics inline_statics=false
-          run_variant opt0 opt_level=0
-          run_variant opt1 opt_level=1
-          run_variant all_off opt_level=0 lto=false strip_unused=false inline_statics=false
-          # debug-профиль
-          d="$RUNNER_TEMP/var_debug"; rm -rf "$d"; mkdir -p "$d"; cp -r "$PROJ_DIR"/. "$d"/; rm -rf "$d/yuki-work"
-          ( cd "$d" && yukino build > build.log 2>&1 ); echo "[debug] build rc=$?"
-          BIN=$(find "$d/yuki-work" -type f \( -name yuki -o -name yuki_debug \) 2>/dev/null | head -1)
-          if [ -n "$BIN" ]; then chmod +x "$BIN"; out=$(timeout 10 "$BIN" version < /dev/null 2>&1); echo "[debug] version rc=$?: $(echo "$out" | head -2 | tr '\n' '|')"; else echo "[debug] бинарь не найден"; tail -3 "$d/build.log"; fi
-
-      - name: Diagnostic - minimal args() repro
-        continue-on-error: true
-        timeout-minutes: 10
-        shell: bash
-        run: |
-          set +e
-          mk() {
-            d="$RUNNER_TEMP/tiny_$1"; rm -rf "$d"; mkdir -p "$d/src"
-            cat > "$d/yuki.toml" <<'TOML'
-          [bin]
-          name = "tiny"
-          namedbg = "tiny_debug"
-          version = "0.1.0"
-          entry = "src/main.ykn"
-          yukino = ["0.1.0", "+"]
-
-          [config.release]
-          opt_level = 3
-          lto = true
-          panic_strategy = "unwind"
-          reloc_model = "pic"
-          emit = ["bin"]
-
-          [features]
-          default = []
-          TOML
-            sed -i 's/^          //' "$d/yuki.toml"
-            cat > "$d/src/main.ykn"
-          }
-          run_tiny() {
-            d="$RUNNER_TEMP/tiny_$1"
-            ( cd "$d" && yukino build release > build.log 2>&1 ); brc=$?
-            BIN=$(find "$d" -type f -name tiny -perm -u+x 2>/dev/null | head -1)
-            if [ -z "$BIN" ]; then echo "[tiny_$1] build rc=$brc, бинарь не найден"; tail -5 "$d/build.log"; return; fi
-            out=$(timeout 10 "$BIN" 2>&1); echo "[tiny_$1] без аргументов rc=$?: $(echo "$out" | tr '\n' '|')"
-            out=$(timeout 10 "$BIN" foo bar 2>&1); echo "[tiny_$1] foo bar rc=$?: $(echo "$out" | tr '\n' '|')"
-          }
-          mk a <<'YKN'
-          load std.io: eprintln
-          load core.process: args
-          fun main() {
-              eprintln("A: start")
-              set a = args()
-              eprintln("A: got args")
-              set n: int64 = a.len()
-              if n > 0 {
-                  eprintln(a[0])
-              }
-              eprintln("A: done")
-          }
-          YKN
-          mk b <<'YKN'
-          load std.io: eprintln
-          load core.process: raw_args
-          fun main() {
-              eprintln("B: start")
-              set r = raw_args()
-              eprintln("B: got raw")
-              eprintln(r)
-              eprintln("B: done")
-          }
-          YKN
-          mk c <<'YKN'
-          load std.io: eprintln
-          load core.process: args
-          public fun warn(msg: string) {
-              eprintln(msg)
-          }
-          public fun step(n: int64, total: int64, msg: string) {
-              eprintln(msg)
-          }
-          public fun err(message: string, code: int32, path: string) -> string {
-              return message
-          }
-          fun main() {
-              warn("C: start")
-              step(1, 2, "C: step")
-              set a = args()
-              eprintln("C: got args")
-              set e = err("C: err", 1, "")
-              eprintln(e)
-              set n: int64 = a.len()
-              if n > 0 {
-                  eprintln(a[0])
-              }
-          }
-          YKN
-          for t in a b c; do sed -i 's/^          //' "$RUNNER_TEMP/tiny_$t/src/main.ykn"; run_tiny $t; done
-
       - name: Errors summary (только при падении)
         if: failure()
         shell: bash
@@ -323,3 +196,30 @@ jobs:
           files: dist/*.tar.zst
           generate_release_notes: true
           
+
+  # Каждая успешная сборка ветки по умолчанию обновляет публичный релиз `nightly`:
+  # прямая ссылка без авторизации, её использует scripts/termux-update.sh
+  nightly:
+    if: github.event_name == 'push' && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+          path: dist
+      - name: Publish nightly release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -e
+          ls -la dist
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly dist/*.tar.zst \
+            --prerelease \
+            --title "nightly" \
+            --target "$GITHUB_SHA" \
+            --notes "Автосборка коммита $GITHUB_SHA. Только для проверки, не для релизов."

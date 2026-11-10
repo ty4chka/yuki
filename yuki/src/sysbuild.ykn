@@ -14,7 +14,7 @@ load std.process: command_new, run
 load std.fs.files: file_exists, file_read_text, file_write_text, file_copy, file_metadata
 load std.fs.dirs: dir_create_all, dir_list
 load std.fs.paths: path_parent, path_file_name
-load std.fs.archives.tar: tar_unpack, tar_pack_dir
+load std.fs.archives.tar: tar_unpack
 load std.os.unix: chmod
 load std.env: get_or
 load std.strings: eq, trim, slice
@@ -23,6 +23,7 @@ load .errors: YukiError, err
 load .config: config_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .verify: VerifyError, check_blake3, audit_tar
 load .pipeline: archive_ext
+load .tarpack: tar_pack_tree
 load .sysplan: PNode, plan_nodes, read_roots
 load .pool: pool_prepare, pool_add, pool_run, pool_raise, jobs_limit
 load .view: InstallView
@@ -209,7 +210,7 @@ fun build_source(dl: string, ref pn: PNode) {
         }
         chmod(to, mode)
     }
-    tar_pack_dir(join2(dir, "pkg.tar.zst"), out, "auto")
+    tar_pack_tree(join2(dir, "pkg.tar.zst"), out)
 }
 
 // Шаг ребёнка «fetch»: параллельно скачать всё, затем собрать одобренное.

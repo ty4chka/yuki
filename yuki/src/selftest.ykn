@@ -10,6 +10,8 @@ load std.json: json_parse, json_stringify
 load std.hash: hex_to_bytes, bytes_to_hex, blake3_str
 load std.hash.blake3: blake3_file
 load std.crypto: ed25519_public_key, ed25519_sign, random_bytes
+load std.fs.archives.tar: tar_list
+load std.os.unix: chmod
 load std.fs.files: file_exists, file_write_text, file_read_text, file_remove
 load std.fs.dirs: dir_create_all, dir_remove_all
 load std.fs.defaults: dir_temp
@@ -21,6 +23,7 @@ load .ui: ok, bad, info, c_dim
 load .util: str_lower, str_pad_end, valid_name, valid_version, ver_cmp, digits_val, edit_distance, is_hex, now_ms, join2, str_split
 load .verify: is_safe_rel_path, link_target_ok, checksum_ok_format, verify_text, signed_message
 load .policy: policy_check
+load .tarpack: tar_pack_tree
 
 fun println_header() {
     info("running self-tests")
@@ -125,6 +128,28 @@ public fun cmd_selftest() {
     set h = spawn(cast(selftest_thread, "ptr<void>"), cast(7, "ptr<void>"))
     join(h)
     check(file_exists(tf) && eq(file_read_text(tf), "thread-7"), "a worker thread starts, runs and joins", ref ~failed)
+
+    // упаковщик: вложенные каталоги, относительные имена, бит исполнения
+    set pk = join2(dir, "pk")
+    dir_create_all(join2(pk, "usr/bin"))
+    set pk_bin = join2(pk, "usr/bin/x")
+    file_write_text(pk_bin, "#!/bin/sh\n")
+    set pk_mode: uint32 = 493
+    chmod(pk_bin, pk_mode)
+    set pk_arc = join2(dir, "pk.tar.zst")
+    tar_pack_tree(pk_arc, pk)
+    set pk_ents = tar_list(pk_arc)
+    set pk_file: bool = false
+    set pk_dirs: int64 = 0
+    for pi in 0..pk_ents.len() {
+        if eq(pk_ents[pi].path, "usr/bin/x") && pk_ents[pi].is_file && pk_ents[pi].size == 10 && cast(pk_ents[pi].mode, "int64") % 512 == 493 {
+            rewrite pk_file = true
+        }
+        if pk_ents[pi].is_dir {
+            rewrite pk_dirs += 1
+        }
+    }
+    check(pk_file && pk_dirs == 2 && pk_ents.len() == 3, "pack: relative names, directories and the executable bit", ref ~failed)
     dir_remove_all(dir)
 
     check(contains(host_target(), "-"), "platform name looks like os-cpu: " + host_target(), ref ~failed)
