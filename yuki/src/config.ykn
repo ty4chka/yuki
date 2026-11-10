@@ -133,7 +133,7 @@ public fun host_allowed(host: string) -> bool {
     if eq(h, "github.com") || eq(h, "codeload.github.com") || eq(h, "raw.githubusercontent.com") {
         return true
     }
-    if eq(h, "objects.githubusercontent.com") || eq(h, "gitlab.com") || eq(h, "codeberg.org") {
+    if eq(h, "objects.githubusercontent.com") || eq(h, "release-assets.githubusercontent.com") || eq(h, "gitlab.com") || eq(h, "codeberg.org") {
         return true
     }
     set extra = join2(config_dir(), "allowed_hosts")
