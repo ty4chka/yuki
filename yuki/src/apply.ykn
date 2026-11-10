@@ -38,7 +38,7 @@ public struct ApplyItem {
 }
 
 fun exists_any(p: string) -> bool {
-    return path_is_symlink(p) || file_exists(p)
+    return path_is_symlink(p) || file_exists(p) || dir_exists(p)
 }
 
 // ── блокировка ──────────────────────────────────────────────────────────

@@ -22,7 +22,7 @@ load core.panic: panic
 load std.io: println
 load std.json: JsonValue, json_parse, json_object, json_array, json_string, json_int, json_bool, json_pretty, json_validate, json_stringify
 load std.fs.files: file_exists, file_read_text, file_write_text
-load std.fs.dirs: dir_create_all, dir_walk
+load std.fs.dirs: dir_create_all, dir_walk, dir_exists
 load std.fs.paths: path_join, path_parent, path_file_name, path_file_stem
 load std.strings: eq, trim, split, slice, str_join, contains, parse_int
 load .errors: YukiError, err
@@ -38,7 +38,7 @@ static ENTRY_LIFETIME: int64 = 7776000
 static RENEW_WARN: int64 = 2592000
 
 fun need_checkout() {
-    if !file_exists("index") {
+    if !dir_exists("index") {
         panic(err("run this inside a checkout of the index repository (no ./index directory)", 211, "index"))
     }
 }
