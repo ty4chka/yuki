@@ -216,6 +216,7 @@ fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 
         tar_unpack(copy, root_dir)
 
         // Восстанавливаем полные права файлов из проверенных метаданных архива
+        set zero: uint32 = 0
         for e in 0..ents.len() {
             set rel = norm_tar_path(ents[e].path)
             if rel.len() == 0 || ents[e].link_target.len() > 0 {
