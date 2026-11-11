@@ -197,8 +197,14 @@ public fun theme_palette() -> string {
     return get_or("YUKI_T_PALETTE", "rgb")
 }
 
+// По умолчанию анимация включена, если stdout — живой терминал.
+// YUKI_ANIM=0|1 (его выставляет theme_init) имеет приоритет.
 public fun animation_on() -> bool {
-    return eq(get_or("YUKI_ANIM", "0"), "1")
+    set v = get_or("YUKI_ANIM", "")
+    if v.len() == 0 {
+        return is_stdout_terminal()
+    }
+    return eq(v, "1")
 }
 
 public fun sym(name: string) -> string {

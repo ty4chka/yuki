@@ -11,7 +11,7 @@ load core.mem: ptr_of
 load core.utils: cast
 load std.os.unix: fork, waitpid, kill, geteuid
 load std.fs.files: file_exists, file_read_text
-load std.strings: trim, parse_int
+load std.strings: trim, parse_int, slice
 load .errors: YukiError, err
 load .util: str_starts, join2, str_split
 
@@ -33,34 +33,36 @@ public fun nobody_id() -> c_uint {
 
 // Настоящий uid ядра: первое число строки "Uid:" в /proc/self/status.
 // proot подменяет только возврат geteuid(), а статус процесса остаётся честным.
+// В /proc/self/status поля разделены ТАБАМИ ("Uid:\t1000\t1000\t1000\t1000"), а не пробелами.
+// Если прочитать не удалось, возвращается -1 (неизвестно).
 fun real_uid() -> int64 {
     set f = "/proc/self/status"
     if !file_exists(f) {
-        return cast(geteuid(), "int64")
+        return -1
     }
     set ls = str_split(file_read_text(f), "\n")
     for i in 0..ls.len() {
         set line = ls[i]
         if str_starts(line, "Uid:") {
-            set fields = str_split(trim(line), " ")
-            for j in 0..fields.len() {
-                set p = trim(fields[j])
-                if p.len() > 0 && p != "Uid:" {
-                    return parse_int(p) ?? -1
-                }
+            set rest = trim(slice(line, 4, line.len()))
+            set fields = str_split(rest, "\t")
+            if fields.len() > 0 {
+                return parse_int(trim(fields[0])) ?? -1
             }
         }
     }
-    return cast(geteuid(), "int64")
+    return -1
 }
 
 // Эмуляция привилегий (proot): geteuid()==0, но ядро видит обычного пользователя.
 // Там setuid() ничего не меняет, а kill(-1) убивает весь сеанс Termux.
+// Fail-closed: proot считается только если ядро ЯВНО показало ненулевой uid.
+// При любой неясности (нет /proc, не разобрали) привилегии сбрасываются как у настоящего root.
 public fun enc_is_proot() -> bool {
     if geteuid() != 0 {
         return false
     }
-    return real_uid() != 0
+    return real_uid() > 0
 }
 
 public fun drop_privileges(uid: c_uint, gid: c_uint) {

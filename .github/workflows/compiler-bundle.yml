@@ -1,0 +1,152 @@
+# compiler-bundle.yml
+# Кладётся в .github/workflows/ любого вашего репозитория (хоть в yuki, хоть в форк yukino).
+# Собирает yukic + yukino + ld.lld под linux x86_64 и упаковывает всё в ОДИН zip,
+# который можно отдать Claude: бинарники запускаются без Nix и без установки чего-либо.
+#
+# Запуск: Actions -> compiler-bundle -> Run workflow (ref можно оставить main или указать тег).
+# Результат: artifact "yukino-sandbox-linux-x86_64" (внутри yukino-sandbox-linux-x86_64.zip).
+#
+# Не проверялось: файл написан без доступа к Nix и GitHub. Первый запуск смотрите по логам,
+# шаг "Проверка пакета" падает, если собранный набор не запускается.
+
+name: compiler-bundle
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: "Репозиторий компилятора"
+        default: "yukitsuri/yukino"
+      ref:
+        description: "Ветка, тег или коммит"
+        default: "main"
+
+permissions:
+  contents: read
+
+jobs:
+  bundle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 120
+    steps:
+      - name: Исходники компилятора
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.ref }}
+          path: yukino-src
+
+      - name: Nix
+        uses: cachix/install-nix-action@v30
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+
+      - name: Сборка release-пакета (yukic, yukino)
+        working-directory: yukino-src
+        run: nix build .#yukino --out-link ../result
+
+      - name: Найти ld.lld из окружения flake
+        working-directory: yukino-src
+        run: |
+          set -euo pipefail
+          # В nix develop есть LLD (так написано в docs/lang/ru/1-setup.md).
+          LLD="$(nix develop --command bash -c 'readlink -f "$(command -v ld.lld)"')"
+          test -x "$LLD"
+          echo "LLD_BIN=$LLD" >> "$GITHUB_ENV"
+
+      - name: Собрать переносимый набор
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/bundle/yukino-sandbox"
+          mkdir -p "$ROOT"/{bin,libexec,lib,share}
+          RES="$(readlink -f result)"
+
+          # Настоящий ELF-файл: Nix иногда кладёт в bin/ скрипт-обёртку, тогда берём .<имя>-wrapped.
+          real_elf() {
+            local p="$1" d b
+            d="$(dirname "$p")"; b="$(basename "$p")"
+            if [ "$(head -c4 "$p" | od -An -tx1 | tr -d ' \n')" = "7f454c46" ]; then echo "$p"; return; fi
+            if [ -f "$d/.${b}-wrapped" ]; then echo "$d/.${b}-wrapped"; return; fi
+            echo "нет ELF для $p" >&2; exit 1
+          }
+
+          cp -L "$(real_elf "$RES/bin/yukic")"  "$ROOT/libexec/yukic"
+          cp -L "$(real_elf "$RES/bin/yukino")" "$ROOT/libexec/yukino"
+          cp -L "$LLD_BIN"                      "$ROOT/libexec/lld"
+          chmod u+w "$ROOT"/libexec/*
+
+          # Динамический загрузчик и все .so, от которых зависят бинарники (включая glibc из Nix).
+          INTERP="$(readelf -l "$ROOT/libexec/yukic" | sed -n 's/.*Requesting program interpreter: \(.*\)]/\1/p')"
+          test -n "$INTERP"
+          cp -L "$INTERP" "$ROOT/lib/ld.so"
+          for b in yukic yukino lld; do
+            ldd "$ROOT/libexec/$b" | awk '/=> \// {print $3}' | while read -r so; do
+              cp -Ln "$so" "$ROOT/lib/" || true
+            done
+          done
+          chmod u+w "$ROOT"/lib/*
+
+          # Обёртки: запуск через собственный ld.so с собственными библиотеками.
+          # RPATH с путями /nix/store игнорируется: этих путей на машине-получателе нет.
+          for pair in "yukic:yukic" "yukino:yukino" "ld.lld:lld"; do
+            name="${pair%%:*}"; real="${pair##*:}"
+            cat > "$ROOT/bin/$name" <<EOF
+          #!/bin/sh
+          R="\$(cd "\$(dirname "\$0")/.." && pwd)"
+          exec "\$R/lib/ld.so" --library-path "\$R/lib" --argv0 "$name" "\$R/libexec/$real" "\$@"
+          EOF
+            chmod +x "$ROOT/bin/$name"
+          done
+          # lld выбирает режим по имени, поэтому нужны ещё имена ld и lld-link как обёртки того же lld
+          for n in ld lld; do cp "$ROOT/bin/ld.lld" "$ROOT/bin/$n"; sed -i "s/--argv0 \"ld.lld\"/--argv0 \"$n\"/" "$ROOT/bin/$n"; done
+
+          cat > "$ROOT/env.sh" <<'EOF'
+          # source env.sh   -> yukic, yukino и ld.lld в PATH
+          R="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)"
+          export PATH="$R/bin:$PATH"
+          EOF
+
+          # Справочные материалы рядом с бинарниками: доки, runtime, stdlib, примеры, исходники крейтов.
+          for d in docs builtin examples crates; do
+            [ -d "yukino-src/$d" ] && cp -r "yukino-src/$d" "$ROOT/share/$d"
+          done
+          rm -rf "$ROOT/share/crates"/*/target 2>/dev/null || true
+
+          {
+            echo "repo:   ${{ inputs.repo }}"
+            echo "ref:    ${{ inputs.ref }}"
+            echo "commit: $(git -C yukino-src rev-parse HEAD)"
+            echo "built:  $(date -u +%FT%TZ)"
+            echo "arch:   $(uname -m)"
+          } > "$ROOT/VERSION.txt"
+
+      - name: Проверка пакета (без Nix-окружения)
+        run: |
+          set -euo pipefail
+          ROOT="$PWD/bundle/yukino-sandbox"
+          cd "$ROOT"
+          # чистое окружение: никаких путей /nix, только то, что лежит в пакете
+          env -i PATH="$ROOT/bin:/usr/bin:/bin" HOME="$RUNNER_TEMP" bash -c '
+            set -e
+            yukic -v
+            yukino -v
+            yukic targets
+            ld.lld --version
+          ' | tee SELFCHECK.txt
+
+      - name: Zip
+        run: |
+          set -euo pipefail
+          cd bundle
+          zip -qr yukino-sandbox-linux-x86_64.zip yukino-sandbox
+          sha256sum yukino-sandbox-linux-x86_64.zip | tee yukino-sandbox-linux-x86_64.zip.sha256
+          ls -lh yukino-sandbox-linux-x86_64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: yukino-sandbox-linux-x86_64
+          path: |
+            bundle/yukino-sandbox-linux-x86_64.zip
+            bundle/yukino-sandbox-linux-x86_64.zip.sha256
+          retention-days: 14
