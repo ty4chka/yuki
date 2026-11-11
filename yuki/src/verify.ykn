@@ -11,7 +11,7 @@ load std.hash.blake3: blake3_file
 load std.crypto: ed25519_verify
 load std.fs.files: file_read_text
 load std.fs.archives.tar: tar_list
-load .util: is_hex, str_starts, str_lower, str_split
+load .util: is_hex, str_starts, str_lower, str_split, sjoin
 
 // Коды: 1 — несовпадение хеша, 2 — неверный формат хеша, 3 — плохая подпись,
 //       4 — небезопасный путь, 5 — ссылка/спецфайл в архиве, 6 — превышен лимит
@@ -108,19 +108,22 @@ public fun is_safe_rel_path(p: string) -> bool {
     return true
 }
 
-// Безопасная цель симлинка: относительная, без пробелов и ":", после разбора ".." остаётся
-// внутри usr/, opt/ или etc/ (то есть не выходит из дерева пакета наружу).
-public fun link_target_ok(link_rel: string, target: string) -> bool {
-    if target.len() == 0 || target.len() > 512 {
-        return false
+// Разрешить относительную цель симлинка относительно пути самой ссылки.
+// Возвращает канонический относительный путь внутри usr/, opt/ или etc/, либо "" при ошибке.
+public fun resolve_link_target(link_rel: string, target: string) -> string {
+    if !is_safe_rel_path(link_rel) {
+        return ""
     }
-    if str_starts(target, "/") || contains(target, "\\") || contains(target, ":") || contains(target, " ") || contains(target, "\0") || contains(target, "|") {
-        return false
+    if target.len() == 0 || target.len() > 512 {
+        return ""
+    }
+    if str_starts(target, "/") || contains(target, "\\") || contains(target, ":") || contains(target, " ") || contains(target, "\t") || contains(target, "\n") || contains(target, "\0") || contains(target, "|") {
+        return ""
     }
     set base = str_split(link_rel, "/")
     set stack: string[] = []
     for i in 0..(base.len() - 1) {
-        if base[i].len() > 0 {
+        if base[i].len() > 0 && !eq(base[i], ".") {
             stack.push(base[i])
         }
     }
@@ -128,7 +131,7 @@ public fun link_target_ok(link_rel: string, target: string) -> bool {
     for i in 0..parts.len() {
         if eq(parts[i], "..") {
             if stack.len() == 0 {
-                return false
+                return ""
             }
             stack.pop()
         } elif parts[i].len() > 0 && !eq(parts[i], ".") {
@@ -136,9 +139,18 @@ public fun link_target_ok(link_rel: string, target: string) -> bool {
         }
     }
     if stack.len() < 2 {
-        return false
+        return ""
     }
-    return eq(stack[0], "usr") || eq(stack[0], "opt") || eq(stack[0], "etc")
+    if !eq(stack[0], "usr") && !eq(stack[0], "opt") && !eq(stack[0], "etc") {
+        return ""
+    }
+    return sjoin(stack, "/")
+}
+
+// Безопасная цель симлинка: относительная, без пробелов и ":", после разбора ".." остаётся
+// внутри usr/, opt/ или etc/ (то есть не выходит из дерева пакета наружу).
+public fun link_target_ok(link_rel: string, target: string) -> bool {
+    return resolve_link_target(link_rel, target).len() > 0
 }
 
 public fun audit_tar(archive: string, max_entries: int64, max_total: int64, max_file: int64, allow_links: bool) -> AuditReport {

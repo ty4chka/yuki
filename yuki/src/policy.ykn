@@ -3,7 +3,7 @@
 
 load std.strings: contains, eq
 load .util: str_starts, str_ends
-load .verify: is_safe_rel_path
+load .verify: is_safe_rel_path, resolve_link_target
 
 fun starts_any(p: string, prefixes: string[]) -> bool {
     for i in 0..prefixes.len() {
@@ -37,15 +37,37 @@ public fun policy_check(pkg: string, rel: string) -> string {
         "etc/passwd", "etc/shadow", "etc/group", "etc/gshadow", "etc/subuid", "etc/subgid",
         "etc/ssh/", "etc/ld.so", "etc/cron", "etc/fstab", "etc/crypttab", "etc/doas.conf",
         "etc/ssl/", "etc/ca-certificates", "usr/share/ca-certificates", "usr/local/share/ca-certificates",
-        "usr/lib/modules", "usr/lib/firmware", "usr/bin/sudo", "usr/bin/su", "usr/bin/doas", "usr/bin/pkexec"
+        "usr/lib/modules", "usr/lib/firmware", "usr/bin/sudo", "usr/bin/su", "usr/bin/doas", "usr/bin/pkexec",
+        "etc/systemd", "usr/lib/systemd", "lib/systemd", "etc/init.d", "etc/rc",
+        "etc/profile", "etc/bash", "etc/zsh", "etc/environment",
+        "etc/polkit-1", "usr/share/polkit-1", "etc/udev", "usr/lib/udev",
+        "etc/modprobe.d", "etc/modules", "etc/dbus-1"
     ]
     if starts_any(rel, never) {
         return "path is protected"
     }
 
     // бинарник самого yuki может заменить только пакет yuki
-    if str_starts(rel, "usr/bin/yuki") && !eq(pkg, "yuki") {
+    set yuki_bins = ["usr/bin/yuki", "usr/local/bin/yuki", "usr/sbin/yuki", "usr/local/sbin/yuki"]
+    if starts_any(rel, yuki_bins) && !eq(pkg, "yuki") {
         return "only the yuki package may replace yuki"
+    }
+    return ""
+}
+
+// Проверка как самого пути симлинка, так и его разрешённой цели по тем же правилам policy_check.
+public fun policy_check_link(pkg: string, link_rel: string, target: string) -> string {
+    set w1 = policy_check(pkg, link_rel)
+    if w1.len() > 0 {
+        return w1
+    }
+    set resolved = resolve_link_target(link_rel, target)
+    if resolved.len() == 0 {
+        return "unsafe symlink target"
+    }
+    set w2 = policy_check(pkg, resolved)
+    if w2.len() > 0 {
+        return "symlink target " + w2 + " (" + resolved + ")"
     }
     return ""
 }

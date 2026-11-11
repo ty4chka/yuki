@@ -14,6 +14,8 @@ load core.panic: panic
 load core.process: exit
 load std.os.unix: fork, waitpid, chmod, chown
 load std.threads: sleep
+load std.crypto: random_bytes
+load std.hash: bytes_to_hex
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all, dir_remove_all
 load std.fs.defaults: dir_temp
@@ -21,7 +23,7 @@ load std.outf: strip_ansi
 load std.strings: slice, eq, trim, parse_int
 load .errors: YukiError, err
 load .config: state_dir
-load .priv: drop_privileges, kill_all_as, nobody_id, is_root
+load .priv: drop_privileges, kill_child_group, nobody_id, is_root
 load .sysplan: child_plan, child_keys, child_catalog
 load .sysbuild: child_fetch
 load .pool: pool_paint, pool_ok
@@ -29,22 +31,31 @@ load .verify: VerifyError
 load .view: InstallView
 load .util: now_ms, join2, sjoin, str_split
 
+fun stage_token() -> string {
+    set rnd: bytes = random_bytes(8)
+    return cast(now_ms(), "string") + "-" + bytes_to_hex(ref rnd)
+}
+
 public fun stage_create() -> string {
+    set m700: uint32 = 448
     if !is_root() {
-        // запросы без root (search, show, outdated): рабочий каталог в temp, привилегий нет
-        set own = join2(join2(dir_temp(), "yuki-" + cast(now_ms(), "string")), "stage")
+        // запросы без root (search, show, outdated): рабочий каталог в temp с криптостойким именем и правами 0700
+        set top = join2(dir_temp(), "yuki-" + stage_token())
+        dir_create_all(top)
+        chmod(top, m700)
+        set own = join2(top, "stage")
         dir_create_all(join2(own, "dl"))
         dir_create_all(join2(own, "art"))
         dir_create_all(join2(own, "root"))
+        chmod(own, m700)
         return own
     }
     set base = join2(state_dir(), "stage")
     dir_create_all(base)
     set m711: uint32 = 457
-    set m700: uint32 = 448
     set nb: uint32 = 65534
     chmod(base, m711)
-    set stage = join2(base, cast(now_ms(), "string"))
+    set stage = join2(base, stage_token())
     dir_create_all(stage)
     chmod(stage, m711)
     set dl = join2(stage, "dl")
@@ -105,35 +116,36 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
         exit(0)
     }
 
-    // родитель не блокируется: рисует панель по файлам прогресса ребёнка
+    // родитель не блокируется: рисует панель по файлам прогресса ребёнка, сбрасывая регион на каждом шаге
     set t0 = now_ms()
     set pool_dir = join2(dl, "pool")
     while waitpid(pid, 1) == 0 {
-        if eq(mode, "fetch") && jobmap.len() > 0 {
-            pool_paint(pool_dir, jobmap.len(), ref jobmap, t0, ref ~view)
-            for j in 0..jobmap.len() {
-                if jobmap[j] >= 0 && pool_ok(pool_dir, j) {
-                    view.set_state(jobmap[j], 2)
+        region {
+            if eq(mode, "fetch") && jobmap.len() > 0 {
+                pool_paint(pool_dir, jobmap.len(), ref jobmap, t0, ref ~view)
+                for j in 0..jobmap.len() {
+                    if jobmap[j] >= 0 && pool_ok(pool_dir, j) {
+                        view.set_state(jobmap[j], 2)
+                    }
+                }
+                set act = join2(dl, "activity")
+                if file_exists(act) {
+                    sus {
+                        view.set_activity(clean_msg(file_read_text(act)))
+                    } catch {
+                        set _ign = 0
+                    }
                 }
             }
-            set act = join2(dl, "activity")
-            if file_exists(act) {
-                sus {
-                    view.set_activity(clean_msg(file_read_text(act)))
-                } catch {
-                }
-            }
+            view.draw(false)
         }
-        view.draw(false)
         sleep(60u64)
     }
-    kill_all_as(nobody_id())
+    kill_child_group(cast(pid, "int64"))
     if !file_exists(join2(dl, "DONE-" + mode)) {
         set why = "the unprivileged step did not finish"
         set code: int32 = 751
         if file_exists(join2(dl, "ERROR")) {
-            // формат: первая строка — код ошибки ребёнка, дальше текст.
-            // Текст недоверенный, а код влияет только на подсказку, поэтому берём лишь 100..999.
             set raw = file_read_text(join2(dl, "ERROR"))
             set l = str_split(raw, "\n")
             set n: int64 = parse_int(trim(l[0])) ?? 0

@@ -21,8 +21,8 @@ load .config: host_target
 load std.io: println
 load .ui: ok, bad, info, c_dim
 load .util: str_lower, str_pad_end, valid_name, valid_version, ver_cmp, digits_val, edit_distance, is_hex, now_ms, join2, str_split
-load .verify: is_safe_rel_path, link_target_ok, checksum_ok_format, verify_text, signed_message
-load .policy: policy_check
+load .verify: is_safe_rel_path, link_target_ok, resolve_link_target, checksum_ok_format, verify_text, signed_message
+load .policy: policy_check, policy_check_link
 load .tarpack: tar_pack_tree
 
 fun println_header() {
@@ -52,6 +52,7 @@ fun selftest_thread(arg: ptr<void>) {
     sus {
         file_write_text(path, "thread-" + cast(cast(arg, "int64"), "string"))
     } catch {
+        set _ign = 0
     }
 }
 
@@ -103,12 +104,14 @@ public fun cmd_selftest() {
     check(edit_distance("instal", "install") == 1 && edit_distance("abc", "abc") == 0, "edit distance", ref ~failed)
     check(checksum_ok_format("blake3:" + blake3_str("x")) && !checksum_ok_format("blake3:xyz") && !checksum_ok_format("sha256:" + blake3_str("x")), "checksum format", ref ~failed)
 
-    // пути и симлинки
+    // пути, симлинки и проверка разрешённых целей симлинков (V-01, V-03)
     check(is_safe_rel_path("usr/bin/rg") && !is_safe_rel_path("../x") && !is_safe_rel_path("/etc/x") && !is_safe_rel_path("a/../../b") && !is_safe_rel_path("a\\b"), "safe relative paths", ref ~failed)
     check(link_target_ok("usr/bin/foo", "../lib/foo") && !link_target_ok("usr/bin/foo", "/etc/passwd") && !link_target_ok("usr/bin/foo", "../../../etc/passwd"), "symlink targets stay inside the package tree", ref ~failed)
+    check(eq(resolve_link_target("usr/local/bin/hook", "../../../etc/sudoers"), "etc/sudoers"), "resolve_link_target canonicalizes relative symlink target", ref ~failed)
+    check(policy_check_link("x", "usr/bin/foo", "../lib/libfoo.so").len() == 0 && policy_check_link("x", "usr/local/bin/hook", "../../../etc/sudoers").len() > 0, "policy_check_link blocks symlinks targeting protected paths", ref ~failed)
     check(policy_check("x", "usr/bin/x").len() == 0, "policy allows usr/bin/x", ref ~failed)
-    check(policy_check("x", "etc/sudoers.d/x").len() > 0 && policy_check("x", "boot/vmlinuz").len() > 0 && policy_check("x", "etc/yuki/trusted_keys").len() > 0, "policy refuses protected paths", ref ~failed)
-    check(policy_check("x", "usr/bin/yuki").len() > 0 && policy_check("yuki", "usr/bin/yuki").len() == 0, "only the yuki package may replace yuki", ref ~failed)
+    check(policy_check("x", "etc/sudoers.d/x").len() > 0 && policy_check("x", "etc/systemd/system/x.service").len() > 0 && policy_check("x", "etc/polkit-1/rules.d/x").len() > 0 && policy_check("x", "boot/vmlinuz").len() > 0 && policy_check("x", "etc/yuki/trusted_keys").len() > 0, "policy refuses protected paths (sudoers, systemd, polkit, boot, yuki)", ref ~failed)
+    check(policy_check("x", "usr/bin/yuki").len() > 0 && policy_check("x", "usr/local/bin/yuki").len() > 0 && policy_check("yuki", "usr/bin/yuki").len() == 0 && policy_check("yuki", "usr/local/bin/yuki").len() == 0, "only the yuki package may replace usr/bin/yuki or usr/local/bin/yuki", ref ~failed)
 
     // JSON: повторная сериализация стабильна (на этом держатся подписи содержимого)
     set j = "{\"b\":[1,2,{\"c\":\"d\"}],\"a\":true}"

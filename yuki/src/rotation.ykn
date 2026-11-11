@@ -5,9 +5,8 @@
 //                               "revoke": ["<64 hex>"] }
 // <index>/keys/rotation.sigs  строки "<pubkey hex> <signature hex>"
 //
-// Применяется, только если её подписали не меньше threshold РАЗНЫХ ключей, которым
-// клиент уже доверяет. Новый ключ сам себя ввести не может. Отозванный ключ попадает
-// в revoked_keys и больше не доверяется, даже если его вернут в trusted_keys.
+// Применяется, только если её подписали не меньше threshold РАЗНЫХ ключей с ролью "publisher",
+// которым клиент уже доверяет. Ключ "renewer" ротировать ключи не может.
 
 load core.utils: cast
 load core.panic: panic
@@ -17,7 +16,7 @@ load std.strings: trim, eq
 load .errors: YukiError, err
 load .stage: stage_create, run_child, stage_remove
 load .view: InstallView
-load .trust: trusted_keys, threshold, revoke_key, trust_add, fingerprint
+load .trust: trusted_keys, trusted_roles, threshold, revoke_key, trust_add, fingerprint
 load .verify: verify_text
 load .index: seen_get, seen_set
 load .util: now_secs, is_hex, valid_name, join2, str_lines, str_lower, str_split
@@ -27,6 +26,15 @@ load .ui: ok, info, warn, step, c_accent, c_dim
 fun rot_in_list(ref l: string[], x: string) -> bool {
     for i in 0..l.len() {
         if eq(l[i], x) {
+            return true
+        }
+    }
+    return false
+}
+
+fun is_trusted_publisher(ref keys: string[], ref roles: string[], pubkey_hex: string) -> bool {
+    for i in 0..keys.len() {
+        if eq(keys[i], pubkey_hex) && i < roles.len() && eq(roles[i], "publisher") {
             return true
         }
     }
@@ -48,18 +56,22 @@ public fun cmd_keys_refresh() {
 
         step(2, 3, "checking signatures as root")
         set keys = trusted_keys()
+        set roles = trusted_roles()
         set counted: string[] = []
         for i in 0..sigs.len() {
             set p = str_split(trim(sigs[i]), " ")
-            if p.len() == 2 && rot_in_list(ref keys, str_lower(p[0])) && !rot_in_list(ref counted, str_lower(p[0])) {
-                if verify_text(str_lower(p[0]), text, p[1]) {
-                    counted.push(str_lower(p[0]))
+            if p.len() == 2 {
+                set k = str_lower(p[0])
+                if is_trusted_publisher(ref keys, ref roles, k) && !rot_in_list(ref counted, k) {
+                    if verify_text(k, text, p[1]) {
+                        counted.push(k)
+                    }
                 }
             }
         }
         set need = threshold()
         if counted.len() < need {
-            panic(err("rotation is signed by " + cast(counted.len(), "string") + " trusted key(s), " + cast(need, "string") + " required", 760, "rotation.json"))
+            panic(err("rotation is signed by " + cast(counted.len(), "string") + " trusted publisher key(s), " + cast(need, "string") + " required", 760, "rotation.json"))
         }
 
         set doc = json_parse(text)

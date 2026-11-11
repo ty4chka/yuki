@@ -161,12 +161,19 @@ fun verified_catalog() -> string {
         set dl = join2(stage, "dl")
         rewrite text = file_read_text(join2(dl, "catalog.json"))
         set sig = trim(file_read_text(join2(dl, "catalog.json.sig")))
-        set keys = trusted_keys()
+        set all_keys = trusted_keys()
+        set all_roles = trusted_roles()
+        set keys: string[] = []
+        for ki in 0..all_keys.len() {
+            if ki < all_roles.len() && eq(all_roles[ki], "publisher") {
+                keys.push(all_keys[ki])
+            }
+        }
         if keys.len() == 0 {
-            panic(err("no trusted keys yet", 202, "catalog.json"))
+            panic(err("no trusted publisher keys yet", 202, "catalog.json"))
         }
         if verify_text_with_any(ref keys, text, sig) < 0 {
-            panic(VerifyError { message: "catalog is not signed by a trusted key", code: 3, path: "catalog.json" })
+            panic(VerifyError { message: "catalog is not signed by a trusted publisher key", code: 3, path: "catalog.json" })
         }
         set doc = json_parse(text)
         if doc.get("expires").as_int() < now_secs() {

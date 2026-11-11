@@ -11,12 +11,16 @@ load std.strings: trim, eq, slice, parse_int
 load std.hash: hex_to_bytes, bytes_to_hex, blake3_str
 load std.crypto: ed25519_public_key, ed25519_sign, random_bytes
 load .errors: YukiError, err
-load .config: config_dir, ensure_dirs
+load .config: config_dir, resolve_config_file, ensure_dirs
 load .util: is_hex, valid_name, join2, sjoin, str_lines, str_lower, str_split
 load .verify: signed_message
 
 fun trust_file() -> string {
     return join2(config_dir(), "trusted_keys")
+}
+
+fun trust_file_read() -> string {
+    return resolve_config_file("trusted_keys")
 }
 
 fun keys_dir() -> string {
@@ -28,14 +32,23 @@ fun revoked_file() -> string {
 }
 
 public fun is_revoked(pubkey_hex: string) -> bool {
-    set f = revoked_file()
-    if !file_exists(f) {
-        return false
+    set key = str_lower(pubkey_hex)
+    set f1 = revoked_file()
+    if file_exists(f1) {
+        set ls = str_lines(file_read_text(f1))
+        for i in 0..ls.len() {
+            if eq(str_lower(trim(ls[i])), key) {
+                return true
+            }
+        }
     }
-    set ls = str_lines(file_read_text(f))
-    for i in 0..ls.len() {
-        if eq(str_lower(trim(ls[i])), str_lower(pubkey_hex)) {
-            return true
+    set f2 = resolve_config_file("revoked_keys")
+    if !eq(f2, f1) && file_exists(f2) {
+        set ls2 = str_lines(file_read_text(f2))
+        for i in 0..ls2.len() {
+            if eq(str_lower(trim(ls2[i])), key) {
+                return true
+            }
         }
     }
     return false
@@ -44,7 +57,7 @@ public fun is_revoked(pubkey_hex: string) -> bool {
 // Доверенные ключи без отозванных (отозванный ключ не вернётся даже из файла).
 public fun trusted_keys() -> string[] {
     set out: string[] = []
-    set f = trust_file()
+    set f = trust_file_read()
     if file_exists(f) {
         set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
@@ -59,7 +72,7 @@ public fun trusted_keys() -> string[] {
 
 // Сколько разных доверенных ключей должны подписать ротацию (файл <config>/threshold, по умолчанию 1).
 public fun threshold() -> int64 {
-    set f = join2(config_dir(), "threshold")
+    set f = resolve_config_file("threshold")
     if file_exists(f) {
         set n: int64 = parse_int(trim(file_read_text(f))) ?? 1
         if n >= 1 && n <= 16 {
@@ -90,7 +103,7 @@ public fun revoke_key(pubkey_hex: string) {
 
 public fun trusted_names() -> string[] {
     set out: string[] = []
-    set f = trust_file()
+    set f = trust_file_read()
     if file_exists(f) {
         set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
@@ -107,7 +120,7 @@ public fun trusted_names() -> string[] {
 // Параллельно trusted_keys().
 public fun trusted_roles() -> string[] {
     set out: string[] = []
-    set f = trust_file()
+    set f = trust_file_read()
     if file_exists(f) {
         set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {
@@ -126,7 +139,7 @@ public fun trusted_roles() -> string[] {
 
 // Сколько разных издателей должны подтвердить содержимое записи (файл <config>/publish_threshold, по умолчанию 1).
 public fun publish_threshold() -> int64 {
-    set f = join2(config_dir(), "publish_threshold")
+    set f = resolve_config_file("publish_threshold")
     if file_exists(f) {
         set n: int64 = parse_int(trim(file_read_text(f))) ?? 1
         if n >= 1 && n <= 8 {

@@ -5,7 +5,9 @@ load core.panic: panic
 load std.io: println
 load std.json: JsonValue, json_parse, json_object, json_array, json_string, json_int, json_bool, json_pretty
 load std.fs.dirs: dir_create_all, dir_exists, dir_remove_all
-load std.fs.files: file_exists, file_read_text, file_write_text
+load std.fs.files: file_exists, file_read_text, file_write_text, file_set_permissions
+load std.crypto: random_bytes
+load std.hash: bytes_to_hex
 load std.strings: eq, trim, slice
 load std.stdotool.format: format_bytes
 load .errors: YukiError, err
@@ -58,8 +60,10 @@ public fun cmd_inspect(archive: string) {
 // Скачать и проверить все архивы параллельно. nidx[i] — узел панели для i-й задачи.
 // Возвращает суммарный размер.
 fun fetch_many(ref urls: string[], ref sums: string[], ref labels: string[], ref nidx: int64[], ref ~view: InstallView) -> int64 {
-    set dir = join2(cache_dir(), "pool-" + cast(now_ms(), "string"))
+    set rnd: bytes = random_bytes(6)
+    set dir = join2(cache_dir(), "pool-" + cast(now_ms(), "string") + "-" + bytes_to_hex(ref rnd))
     pool_prepare(dir)
+    file_set_permissions(dir, 448)
     for i in 0..urls.len() {
         pool_add(dir, i, "cache", urls[i], sums[i], "", labels[i])
     }

@@ -33,6 +33,22 @@ public fun config_dir() -> string {
     return dir_app_config("yuki")
 }
 
+// Найти конфигурационный файл на чтение: сначала в config_dir(), а для проектных
+// команд без YUKI_CONFIG_DIR — фоллбек на системный /etc/yuki/<name>.
+public fun resolve_config_file(name: string) -> string {
+    set primary = join2(config_dir(), name)
+    if file_exists(primary) {
+        return primary
+    }
+    if !system_mode() && get_or("YUKI_CONFIG_DIR", "").len() == 0 {
+        set sys_f = join2("/etc/yuki", name)
+        if file_exists(sys_f) {
+            return sys_f
+        }
+    }
+    return primary
+}
+
 public fun cache_dir() -> string {
     set o = get_or("YUKI_CACHE_DIR", "")
     if o.len() > 0 {
@@ -91,13 +107,11 @@ public fun ensure_dirs() {
     dir_create_all(state_dir())
 }
 
-// Адреса индекса: YUKI_INDEX (через запятую) или строки файла <config>/index_url.
-// Первый основной, остальные зеркала: если основной недоступен, клиент пробует следующие.
-// Зеркало не обязано быть доверенным: подписи проверяются одни и те же.
+// Адреса индекса: YUKI_INDEX (через запятую) или строки файла <config>/index_url (с фоллбеком на /etc/yuki/index_url).
 public fun index_urls() -> string[] {
     set raw = trim(get_or("YUKI_INDEX", ""))
     if raw.len() == 0 {
-        set f = join2(config_dir(), "index_url")
+        set f = resolve_config_file("index_url")
         if file_exists(f) {
             rewrite raw = trim(file_read_text(f))
         }
@@ -127,7 +141,7 @@ public fun index_url() -> string {
     return index_urls()[0]
 }
 
-// Скачивать можно только с этих хостов (плюс строки из <config>/allowed_hosts).
+// Скачивать можно только с этих хостов (плюс строки из <config>/allowed_hosts или /etc/yuki/allowed_hosts).
 public fun host_allowed(host: string) -> bool {
     set h = str_lower(host)
     if eq(h, "github.com") || eq(h, "codeload.github.com") || eq(h, "raw.githubusercontent.com") {
@@ -136,7 +150,7 @@ public fun host_allowed(host: string) -> bool {
     if eq(h, "objects.githubusercontent.com") || eq(h, "release-assets.githubusercontent.com") || eq(h, "gitlab.com") || eq(h, "codeberg.org") {
         return true
     }
-    set extra = join2(config_dir(), "allowed_hosts")
+    set extra = resolve_config_file("allowed_hosts")
     if file_exists(extra) {
         set ls = str_lines(file_read_text(extra))
         for i in 0..ls.len() {

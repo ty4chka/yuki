@@ -5,7 +5,7 @@
 //   1. ребёнок (nobody, no_new_privs) приносит записи индекса
 //   2. root заново проверяет подписи, срок, откат и строит план; спрашивает подтверждение
 //   3. ребёнок скачивает готовые сборки или собирает в песочнице то, что root одобрил
-//   4. root копирует артефакты к себе, заново проверяет blake3 и аудит, распаковывает в свой каталог
+//   4. root копирует артефакты к себе, заново проверяет blake3, аудит и политику путей, распаковывает в свой каталог
 //   5. root применяет транзакцию с журналом и откатом
 
 load core.utils: cast
@@ -31,6 +31,7 @@ load .stage: stage_create, stage_remove, run_child, write_roots
 load .sysplan: PNode, plan_nodes, spec_name, spec_ver
 load .sysbuild: build_policy
 load .pipeline: archive_ext
+load .policy: policy_check, policy_check_link
 load .verify: VerifyError, check_blake3, audit_tar
 load .apply: ApplyItem, apply_transaction, remove_package, rollback_locked, check_package
 load .sysdb: PkgRecord, is_held, is_explicit, mark_explicit, orphans, dependents_of, db_names, db_read, db_has, db_files, owner_of, f_kind, f_path, history_add
@@ -150,9 +151,7 @@ fun norm_tar_path(p: string) -> string {
 }
 
 // Всё, что лежит в dl/, принёс недоверенный процесс: копируем к себе (только обычные
-// файлы, без симлинков), заново проверяем хеш и аудит, распаковываем в каталог root.
-// Для сборок из исходников файлы сверяются с подписанными blake3 (если они указаны).
-// Возвращает число сборок, результат которых нечем проверить (без хеша в записи).
+// файлы, без симлинков), заново проверяем хеш, аудит и политику путей ДО распаковки.
 fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 {
     set unpinned: int64 = 0
     set dl = join2(stage, "dl")
@@ -190,12 +189,25 @@ fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 
         }
         audit_tar(copy, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, true)
 
-        // безопасные симлинки из аудированного списка архива
+        // Предраспаковочная проверка политики путей и целей симлинков (ДО tar_unpack и chmod!)
         set links: string[] = []
         set ents = tar_list(copy)
         for e in 0..ents.len() {
+            set rel_e = norm_tar_path(ents[e].path)
+            if rel_e.len() == 0 {
+                continue
+            }
             if ents[e].link_target.len() > 0 {
-                links.push(norm_tar_path(ents[e].path) + "|" + ents[e].link_target)
+                set lwhy = policy_check_link(name, rel_e, ents[e].link_target)
+                if lwhy.len() > 0 {
+                    panic(err(lwhy + ": " + rel_e, 721, name))
+                }
+                links.push(rel_e + "|" + ents[e].link_target)
+            } else {
+                set pwhy = policy_check(name, rel_e)
+                if pwhy.len() > 0 {
+                    panic(err(pwhy + ": " + rel_e, 721, name))
+                }
             }
         }
 
@@ -203,9 +215,7 @@ fun collect(stage: string, ref nodes: PNode[], ref items: ApplyItem[]) -> int64 
         dir_create_all(root_dir)
         tar_unpack(copy, root_dir)
 
-        // tar_unpack создаёт файлы с 0600, а apply.ykn определяет исполняемость
-        // по битам на диске. Права берём из записи архива (уже аудированного).
-        set zero: uint32 = 0
+        // Восстанавливаем полные права файлов из проверенных метаданных архива
         for e in 0..ents.len() {
             set rel = norm_tar_path(ents[e].path)
             if rel.len() == 0 || ents[e].link_target.len() > 0 {
@@ -281,7 +291,8 @@ fun install_core(stage: string, ref roots: string[]) {
     run_child(stage, "plan", ref ~quiet, ref nomap)
 
     step(2, 2, "verifying signatures and building the plan as root")
-    set nodes = plan_nodes(dl, ref roots, false, true)
+    // Сначала строим план с record = false, чтобы не мутировать seen до согласия пользователя
+    set nodes = plan_nodes(dl, ref roots, false, false)
     show_plan(ref nodes)
     set work: int64 = 0
     for i in 0..nodes.len() {
@@ -306,6 +317,8 @@ fun install_core(stage: string, ref roots: string[]) {
             panic(err("aborted", 753, ""))
         }
     }
+    // Фиксируем seq в seen после подтверждения плана
+    set _recorded = plan_nodes(dl, ref roots, false, true)
     approve_builds(stage, ref nodes)
 
     // живая панель: дерево только из того, что реально будет ставиться
@@ -347,7 +360,11 @@ fun install_core(stage: string, ref roots: string[]) {
     // обновление самого yuki: новый бинарник обязан запуститься, иначе откат
     for i in 0..items.len() {
         if eq(items[i].name, "yuki") {
-            set r = run("/usr/bin/yuki", ["version"])
+            set bin = "/usr/bin/yuki"
+            if !file_exists(bin) && file_exists("/usr/local/bin/yuki") {
+                rewrite bin = "/usr/local/bin/yuki"
+            }
+            set r = run(bin, ["version"])
             if !r.success() {
                 rollback_locked(txid)
                 panic(err("the new yuki failed its self-check; rolled back", 754, txid))

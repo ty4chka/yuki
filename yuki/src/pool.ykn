@@ -7,9 +7,6 @@
 //   state-<i>   "ok\n<результат>" или "err\n<код>\n<сообщение>"  (пишет воркер)
 // Рисует и опрашивает один поток (главный), воркеры скачивают и сразу проверяют хеш,
 // поэтому анимация не замирает, пока считается blake3.
-//
-// kind "cache" — проектный режим: fetch_verified (кэш, хеш, аудит).
-// kind "file"  — системный режим: скачать в dest и сверить blake3 (аудит делает root).
 
 load core.utils: cast
 load core.panic: panic
@@ -135,12 +132,14 @@ fun read_total(dir: string, i: int64) -> int64 {
 public fun pool_paint(dir: string, count: int64, ref nidx: int64[], t0: int64, ref ~view: InstallView) {
     set sum: int64 = 0
     for i in 0..count {
-        set got = read_received(dir, i)
-        rewrite sum += got
-        if nidx[i] >= 0 {
-            set total = read_total(dir, i)
-            if total > 0 {
-                view.set_pct(nidx[i], got * 100 / total)
+        region {
+            set got = read_received(dir, i)
+            rewrite sum += got
+            if nidx[i] >= 0 {
+                set total = read_total(dir, i)
+                if total > 0 {
+                    view.set_pct(nidx[i], got * 100 / total)
+                }
             }
         }
     }
@@ -151,7 +150,6 @@ public fun pool_paint(dir: string, count: int64, ref nidx: int64[], t0: int64, r
 }
 
 // Запустить все задачи не более чем в `parallel` потоков и дождаться завершения.
-// Панель (если она живая) рисуется из этого потока; воркеры только скачивают.
 public fun pool_run(dir: string, count: int64, parallel: int64, ref nidx: int64[], ref ~view: InstallView) {
     set_env("YUKI_POOL_DIR", dir)
     set handles: uint64[] = []
@@ -165,32 +163,34 @@ public fun pool_run(dir: string, count: int64, parallel: int64, ref nidx: int64[
     set running: int64 = 0
     set t0 = now_ms()
     loop {
-        while started < count && running < parallel {
-            rewrite handles[started] = spawn(cast(pool_worker, "ptr<void>"), cast(started + 1, "ptr<void>"))
-            rewrite status[started] = 1
-            if nidx[started] >= 0 {
-                view.set_state(nidx[started], 1)
+        region {
+            while started < count && running < parallel {
+                rewrite handles[started] = spawn(cast(pool_worker, "ptr<void>"), cast(started + 1, "ptr<void>"))
+                rewrite status[started] = 1
+                if nidx[started] >= 0 {
+                    view.set_state(nidx[started], 1)
+                }
+                rewrite started += 1
+                rewrite running += 1
             }
-            rewrite started += 1
-            rewrite running += 1
-        }
-        for i in 0..started {
-            if status[i] == 1 && is_finished(handles[i]) {
-                join(handles[i])
-                rewrite status[i] = 2
-                rewrite running -= 1
-                rewrite finished += 1
-                if nidx[i] >= 0 {
-                    if pool_ok(dir, i) {
-                        view.set_state(nidx[i], 3)
-                    } else {
-                        view.set_state(nidx[i], 4)
+            for i in 0..started {
+                if status[i] == 1 && is_finished(handles[i]) {
+                    join(handles[i])
+                    rewrite status[i] = 2
+                    rewrite running -= 1
+                    rewrite finished += 1
+                    if nidx[i] >= 0 {
+                        if pool_ok(dir, i) {
+                            view.set_state(nidx[i], 3)
+                        } else {
+                            view.set_state(nidx[i], 4)
+                        }
                     }
                 }
             }
+            pool_paint(dir, count, ref nidx, t0, ref ~view)
+            view.draw(false)
         }
-        pool_paint(dir, count, ref nidx, t0, ref ~view)
-        view.draw(false)
         if finished >= count {
             break
         }

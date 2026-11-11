@@ -2,15 +2,14 @@
 // Политика: только https, только хосты из allow-list, без порта и userinfo,
 // максимум 5 редиректов, жёсткий лимит размера. Целостность гарантирует не
 // транспорт, а BLAKE3/подпись: оборванная загрузка просто не пройдёт проверку.
-// Запрос идёт как HTTP/1.0 + Connection: close, но если сервер всё равно ответил
-// chunked, тело разбирается (раньше это было ограничением).
-// Прогресс пишется в маленький файл prog_path: его читает рисующий поток/процесс.
+// Чтение из TLS выполняется через побайтовый буфер read_bytes (без паники на не-UTF-8
+// байтах бинарных архивов), а запись на диск — через File.write.
 
 load core.utils: cast
 load core.panic: panic
 load std.net: tcp_connect, tls_connect, TlsStream
 load std.strings: trim, slice, contains, eq, parse_int
-load std.fs.files: File, open_write, file_remove, file_write_text
+load std.fs.files: File, file_open_write, file_remove, file_write_text
 load std.stdotool.format: format_speed
 load .errors: YukiError, err
 load .config: host_allowed
@@ -67,7 +66,7 @@ fun parse_target(url: string) -> Target {
 
 // Проверка URL без обращения к сети.
 public fun check_url(url: string) {
-    set t = parse_target(url)
+    set _t = parse_target(url)
 }
 
 fun header_value(ref hl: string[], name: string) -> string {
@@ -82,16 +81,24 @@ fun header_value(ref hl: string[], name: string) -> string {
     return ""
 }
 
-// Конец потока и сетевые ошибки читаются как EOF: усечённое тело всё равно
-// провалит проверку хеша или подписи.
+// Побайтовое чтение из TLS без валидации UTF-8 (не вызывает NetError InvalidData на .tar.zst).
 fun read_chunk(ref ~tls: TlsStream) -> string {
-    set chunk = ""
+    set buf: uint8[65536]
+    set n: int64 = 0
     sus {
-        rewrite chunk = tls.read(65536)
+        rewrite n = tls.read_bytes(buf.as_ptr(), 65536)
     } catch {
-        rewrite chunk = ""
+        rewrite n = 0
     }
-    return chunk
+    if n <= 0 {
+        return ""
+    }
+    set out: bytes = []
+    out.reserve(n)
+    for i in 0..n {
+        out.push(buf[i])
+    }
+    return cast(out, "string")
 }
 
 fun hexval(ch: string) -> int64 {
@@ -199,6 +206,7 @@ fun write_progress(prog_path: string, received: int64, total: int64, last: int64
     sus {
         file_write_text(prog_path, cast(received, "string") + " " + cast(total, "string"))
     } catch {
+        set _ign = 0
     }
     return now
 }
@@ -283,27 +291,69 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
         return Response { status: status, location: "", body: body, received: received }
     }
 
-    set f = open_write(dest)
+    set f = file_open_write(dest)
     defer { f.close() }
-    loop {
-        set piece = next_piece(ref ~tls, ref ~rd)
-        if piece.len() == 0 {
-            break
+    if !chunked {
+        if body_start.len() > 0 {
+            rewrite received += body_start.len()
+            if received > max_bytes {
+                panic(err("download is larger than the allowed limit", 407, url))
+            }
+            f.write(body_start.as_ptr(), body_start.len())
+            rewrite last = write_progress(prog_path, received, clen, last, t_start)
         }
-        rewrite received += piece.len()
-        if received > max_bytes {
-            panic(err("download is larger than the allowed limit", 407, url))
+        set dl_buf: uint8[65536]
+        loop {
+            if clen >= 0 && received >= clen {
+                break
+            }
+            set n: int64 = 0
+            sus {
+                rewrite n = tls.read_bytes(dl_buf.as_ptr(), 65536)
+            } catch {
+                rewrite n = 0
+            }
+            if n <= 0 {
+                break
+            }
+            rewrite received += n
+            if received > max_bytes {
+                panic(err("download is larger than the allowed limit", 407, url))
+            }
+            f.write(dl_buf.as_ptr(), n)
+            region {
+                rewrite last = write_progress(prog_path, received, clen, last, t_start)
+            }
         }
-        f.write_text(piece)
-        rewrite last = write_progress(prog_path, received, clen, last, t_start)
-        if clen >= 0 && received >= clen {
-            break
+    } else {
+        loop {
+            set done_chunk = false
+            region {
+                set piece = next_piece(ref ~tls, ref ~rd)
+                if piece.len() == 0 {
+                    rewrite done_chunk = true
+                } else {
+                    rewrite received += piece.len()
+                    if received > max_bytes {
+                        panic(err("download is larger than the allowed limit", 407, url))
+                    }
+                    f.write(piece.as_ptr(), piece.len())
+                    rewrite last = write_progress(prog_path, received, clen, last, t_start)
+                    if clen >= 0 && received >= clen {
+                        rewrite done_chunk = true
+                    }
+                }
+            }
+            if done_chunk {
+                break
+            }
         }
     }
     if prog_path.len() > 0 {
         sus {
             file_write_text(prog_path, cast(received, "string") + " " + cast(received, "string"))
         } catch {
+            set _ign = 0
         }
     }
     if clen >= 0 && received < clen {

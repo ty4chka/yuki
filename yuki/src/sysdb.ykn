@@ -1,7 +1,7 @@
 // sysdb.ykn — база установленных пакетов (как /var/lib/pacman/local).
 //
 //   <state>/db/<имя>/desc    key=value: name version checksum signer origin deps installed_at
-//   <state>/db/<имя>/files   "<blake3> <mode> <f|d> <путь>" по строке на объект пакета
+//   <state>/db/<имя>/files   "<blake3> <mode> <f|d|l> <путь>" по строке на объект пакета
 //   <state>/history          журнал транзакций (только дописывается)
 
 load core.utils: cast
@@ -12,7 +12,7 @@ load std.fs.paths: path_file_name
 load std.strings: trim, eq, slice, parse_int
 load .util: str_index, join2, sjoin, str_lines, str_split
 load .errors: YukiError, err
-load .config: state_dir, config_dir
+load .config: state_dir, resolve_config_file
 
 public struct PkgRecord {
     name: string
@@ -134,15 +134,21 @@ public fun f_path(line: string) -> string {
     return p[3]
 }
 
-// Кто владеет файлом ("" — никто).
+// Кто владеет файлом ("" — никто). Использует region для сброса временных строк пакета.
 public fun owner_of(rel: string) -> string {
     set names = db_names()
+    set found_owner = ""
     for i in 0..names.len() {
-        set fl = db_files(names[i])
-        for j in 0..fl.len() {
-            if eq(f_path(fl[j]), rel) {
-                return names[i]
+        region {
+            set fl = db_files(names[i])
+            for j in 0..fl.len() {
+                if eq(f_path(fl[j]), rel) {
+                    rewrite found_owner = names[i]
+                }
             }
+        }
+        if found_owner.len() > 0 {
+            return found_owner
         }
     }
     return ""
@@ -153,12 +159,18 @@ public fun dependents_of(name: string) -> string[] {
     set out: string[] = []
     set names = db_names()
     for i in 0..names.len() {
-        set rec = db_read(names[i])
-        set ds = str_split(rec.deps, ",")
-        for j in 0..ds.len() {
-            if eq(ds[j], name) {
-                out.push(names[i])
+        set hit = false
+        region {
+            set rec = db_read(names[i])
+            set ds = str_split(rec.deps, ",")
+            for j in 0..ds.len() {
+                if eq(ds[j], name) {
+                    rewrite hit = true
+                }
             }
+        }
+        if hit {
+            out.push(names[i])
         }
     }
     return out
@@ -172,7 +184,7 @@ public fun history_add(line: string) {
 // Пакеты, которые upgrade не трогает (<config>/hold, по имени в строке).
 public fun held_names() -> string[] {
     set out: string[] = []
-    set f = join2(config_dir(), "hold")
+    set f = resolve_config_file("hold")
     if file_exists(f) {
         set ls = str_lines(file_read_text(f))
         for i in 0..ls.len() {

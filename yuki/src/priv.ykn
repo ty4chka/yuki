@@ -1,8 +1,8 @@
 // priv.ykn — разделение привилегий.
 //
 // Сеть, разбор чужих данных и сборка выполняются в дочернем процессе, который
-// сначала отказывается от root: setgroups(0) → setgid → setuid → проверка, что
-// root вернуть нельзя → no_new_privs (setuid-бинарники больше не повышают права).
+// сначала переходит в отдельную группу процессов setpgid(0, 0) и отказывается от root:
+// setgroups(0) → setgid → setuid → проверка, что root вернуть нельзя → no_new_privs.
 // Root-часть ничему из того, что принёс ребёнок, не верит и всё проверяет заново.
 
 load core.panic: panic
@@ -11,13 +11,14 @@ load core.mem: ptr_of
 load core.utils: cast
 load std.os.unix: fork, waitpid, kill, geteuid
 load std.fs.files: file_exists, file_read_text
-load std.strings: trim, parse_int, slice
+load std.strings: trim, parse_int, eq
 load .errors: YukiError, err
-load .util: str_starts, join2, str_split
+load .util: str_starts, join2, sjoin, str_split
 
 cfun setgroups(size: c_size_t, list: ptr<c_uint>) -> c_int;
 cfun setgid(gid: c_uint) -> c_int;
 cfun setuid(uid: c_uint) -> c_int;
+cfun setpgid(pid: c_int, pgid: c_int) -> c_int;
 cfun sync() -> void;
 cfun prctl(option: c_int, a2: c_size_t, a3: c_size_t, a4: c_size_t, a5: c_size_t) -> c_int;
 
@@ -33,21 +34,29 @@ public fun nobody_id() -> c_uint {
 
 // Настоящий uid ядра: первое число строки "Uid:" в /proc/self/status.
 // proot подменяет только возврат geteuid(), а статус процесса остаётся честным.
-// В /proc/self/status поля разделены ТАБАМИ ("Uid:\t1000\t1000\t1000\t1000"), а не пробелами.
-// Если прочитать не удалось, возвращается -1 (неизвестно).
+// При ошибке чтения возвращаем -1 (fail-closed для детекции PRoot).
 fun real_uid() -> int64 {
     set f = "/proc/self/status"
     if !file_exists(f) {
+        return cast(geteuid(), "int64")
+    }
+    set text = ""
+    sus {
+        rewrite text = file_read_text(f)
+    } catch {
         return -1
     }
-    set ls = str_split(file_read_text(f), "\n")
+    set ls = str_split(text, "\n")
     for i in 0..ls.len() {
         set line = ls[i]
         if str_starts(line, "Uid:") {
-            set rest = trim(slice(line, 4, line.len()))
-            set fields = str_split(rest, "\t")
-            if fields.len() > 0 {
-                return parse_int(trim(fields[0])) ?? -1
+            set norm = sjoin(str_split(trim(line), "\t"), " ")
+            set fields = str_split(norm, " ")
+            for j in 0..fields.len() {
+                set p = trim(fields[j])
+                if p.len() > 0 && !eq(p, "Uid:") {
+                    return parse_int(p) ?? -1
+                }
             }
         }
     }
@@ -56,12 +65,12 @@ fun real_uid() -> int64 {
 
 // Эмуляция привилегий (proot): geteuid()==0, но ядро видит обычного пользователя.
 // Там setuid() ничего не меняет, а kill(-1) убивает весь сеанс Termux.
-// Fail-closed: proot считается только если ядро ЯВНО показало ненулевой uid.
-// При любой неясности (нет /proc, не разобрали) привилегии сбрасываются как у настоящего root.
 public fun enc_is_proot() -> bool {
     if geteuid() != 0 {
         return false
     }
+    // Fail-closed: proot — только если ядро ЯВНО показало ненулевой uid.
+    // При неясности считаем, что root настоящий, и привилегии сбрасываем.
     return real_uid() > 0
 }
 
@@ -72,6 +81,8 @@ public fun drop_privileges(uid: c_uint, gid: c_uint) {
     if enc_is_proot() {
         return
     }
+    set zpid: c_int = 0
+    set _pg = setpgid(zpid, zpid)
     set none: c_size_t = 0
     set dummy: c_uint = 0
     set zero: c_uint = 0
@@ -90,32 +101,30 @@ public fun drop_privileges(uid: c_uint, gid: c_uint) {
     set a1: c_size_t = 1
     set a0: c_size_t = 0
     set opt: c_int = 38
-    prctl(opt, a1, a0, a0, a0)
+    if prctl(opt, a1, a0, a0, a0) != 0 {
+        panic(err("could not set PR_SET_NO_NEW_PRIVS", 701, ""))
+    }
 }
 
-// Убить все процессы пользователя uid: после ребёнка не должно остаться демонов,
-// которые продолжили бы менять файлы, пока root их проверяет.
-// kill(-1) допустим только там, где разделение uid настоящее.
+// Завершить всю группу процессов дочернего воркера (-child_pid), не затрагивая
+// сторонние системные демоны ОС, работающие под пользователем nobody.
+public fun kill_child_group(child_pid: int64) {
+    if !is_root() || enc_is_proot() || child_pid <= 1 {
+        return
+    }
+    sus {
+        set _r = kill(cast(-child_pid, "int32"), 9)
+    } catch {
+        set _ign = 0
+    }
+}
+
+// Совместимая обёртка: больше не вызывает глобальный kill(-1, 9) от nobody.
 public fun kill_all_as(uid: c_uint) {
-    if !is_root() {
+    if !is_root() || enc_is_proot() {
         return
     }
-    if enc_is_proot() {
-        return
-    }
-    set pid = fork()
-    if pid < 0 {
-        panic(err("fork failed", 703, ""))
-    }
-    if pid == 0 {
-        sus {
-            drop_privileges(uid, uid)
-            kill(-1, 9)
-        } catch {
-        }
-        exit(0)
-    }
-    waitpid(pid, 0)
+    set _unused = uid
 }
 
 // Сбросить буферы файловой системы на диск: точки долговечности журнала транзакции.

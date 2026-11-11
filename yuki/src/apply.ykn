@@ -1,12 +1,11 @@
 // apply.ykn — транзакция установки и удаления (root).
 //
-// Порядок для каждого пакета:
-//   A. намерение — проверить пакет, найти конфликты, сделать резервные копии, записать ВЕСЬ журнал, sync на диск
-//   B. запись    — каталоги, файлы и симлинки: временный файл → проверка хеша → chmod/chown → rename
-//   C. уборка    — удалить файлы старой версии, которых больше нет
-//   D. база      — записать запись о пакете, sync
-// Журнал пишется до любых изменений (A), поэтому после сбоя питания незавершённая транзакция
-// откатывается автоматически при следующем запуске. Блокировка: каталог <state>/lock (mkdir атомарен).
+// Порядок для транзакции:
+//   0. предпроверка — просканировать ВСЕ пакеты транзакции, проверить policy_check / policy_check_link и конфликты до первой записи
+//   A. намерение    — сделать резервные копии, записать ВЕСЬ журнал, sync на диск
+//   B. запись       — каталоги, файлы и симлинки: временный файл → проверка хеша → точный chmod/chown → rename
+//   C. уборка       — удалить файлы старой версии, которых больше нет
+//   D. база         — записать запись о пакете, sync
 
 load core.utils: cast
 load core.panic: panic
@@ -19,7 +18,7 @@ load std.strings: slice, eq, trim, parse_int
 load .errors: YukiError, err
 load .config: state_dir
 load .priv: sync_disk
-load .policy: policy_check, is_config
+load .policy: policy_check, policy_check_link, is_config
 load .verify: link_target_ok
 load .sysdb: PkgRecord, db_has, db_dir, db_read, db_write, db_files, db_remove, owner_of, dependents_of, history_add, f_hash, f_mode, f_kind, f_path
 load .util: now_secs, now_ms, str_starts, join2, sjoin, str_lines, str_split
@@ -47,10 +46,25 @@ fun lock_dir() -> string {
     return join2(state_dir(), "lock")
 }
 
+// Безопасная обёртка над dir_create: перехватывает панику FsError (AlreadyExists),
+// возвращая false, чтобы ветка очистки устаревшего лока корректно выполнялась.
+fun try_dir_create(p: string) -> bool {
+    if dir_exists(p) {
+        return false
+    }
+    set ok = false
+    sus {
+        rewrite ok = dir_create(p)
+    } catch {
+        rewrite ok = false
+    }
+    return ok
+}
+
 fun lock_acquire() {
     dir_create_all(state_dir())
     set ld = lock_dir()
-    if !dir_create(ld) {
+    if !try_dir_create(ld) {
         set pf = join2(ld, "pid")
         set alive = false
         if file_exists(pf) {
@@ -63,7 +77,7 @@ fun lock_acquire() {
             panic(err("another yuki is running (lock: " + ld + ")", 730, ld))
         }
         dir_remove_all(ld)
-        if !dir_create(ld) {
+        if !try_dir_create(ld) {
             panic(err("could not take the lock: " + ld, 730, ld))
         }
     }
@@ -84,10 +98,24 @@ fun jr(txid: string, line: string) {
     file_append_text(join2(tx_dir(txid), "journal"), line + "\n")
 }
 
+fun parse_file_mode(mode: string) -> uint32 {
+    if eq(mode, "644") {
+        return 420
+    }
+    if eq(mode, "755") {
+        return 493
+    }
+    set n: int64 = parse_int(mode) ?? 420
+    if n <= 0 || n > 511 {
+        return 420
+    }
+    return cast(n, "uint32")
+}
+
 fun restore_file(backup: string, dest: string, mode: string) {
     set tmp = dest + ".yuki-tmp"
     file_copy(backup, tmp)
-    set m: uint32 = cast(parse_int(mode) ?? 420, "uint32")
+    set m: uint32 = parse_file_mode(mode)
     chmod(tmp, m)
     set root: uint32 = 0
     chown(tmp, root, root)
@@ -155,6 +183,7 @@ fun recover_interrupted() {
             sus {
                 rollback_tx(path_file_name(all[i]))
             } catch {
+                set _ign = 0
             }
         }
     }
@@ -181,10 +210,9 @@ fun link_target_for(ref items: ApplyItem[], n: int64, rel: string) -> string {
 }
 
 // Строки "<hash> <mode> <kind> <path>"; для симлинка вместо hash стоит его цель, kind = l.
-// Только каталоги, обычные файлы и безопасные симлинки; каждый путь прошёл policy.
+// Только каталоги, обычные файлы и безопасные симлинки; каждый путь и цель симлинка прошли policy.
 fun scan_package(pkg: string, root: string, ref items: ApplyItem[], n: int64) -> string[] {
     set out: string[] = []
-    set exec_bits: uint32 = 73
     set zero: uint32 = 0
     set all = dir_walk(root)
     for i in 0..all.len() {
@@ -201,19 +229,22 @@ fun scan_package(pkg: string, root: string, ref items: ApplyItem[], n: int64) ->
             if tgt.len() == 0 || !link_target_ok(rel, tgt) {
                 panic(err("unsafe or unexpected symlink: " + rel, 720, pkg))
             }
-            out.push(tgt + " 777 l " + rel)
+            set lwhy = policy_check_link(pkg, rel, tgt)
+            if lwhy.len() > 0 {
+                panic(err(lwhy + ": " + rel, 721, pkg))
+            }
+            out.push(tgt + " 511 l " + rel)
             continue
         }
         set md = file_metadata(all[i])
         if md.is_dir {
-            out.push("- 755 d " + rel)
+            out.push("- 493 d " + rel)
         } elif md.is_file {
-            set mode = "644"
-            set bits: uint32 = md.mode & exec_bits
-            if bits != zero {
-                rewrite mode = "755"
+            set perm: uint32 = md.mode & 511
+            if perm == zero {
+                rewrite perm = 420
             }
-            out.push(blake3_file(all[i]) + " " + mode + " f " + rel)
+            out.push(blake3_file(all[i]) + " " + cast(perm, "string") + " f " + rel)
         } else {
             panic(err("special files are not allowed: " + rel, 720, pkg))
         }
@@ -261,7 +292,42 @@ fun backup_existing(txid: string, rel: string, dest: string, old_line: string) {
     set bak = join2(join2(tx_dir(txid), "bak"), rel)
     dir_create_all(path_parent(bak))
     file_copy(dest, bak)
-    jr(txid, "bak " + dest + " " + bak + " " + cast(md.mode, "string"))
+    set perm: uint32 = md.mode & 511
+    jr(txid, "bak " + dest + " " + bak + " " + cast(perm, "string"))
+}
+
+// Предварительная проверка политики и файловых конфликтов по всем пакетам транзакции
+// до того, как первый пакет начнёт записывать изменения в корень /.
+fun precheck_all_items(ref items: ApplyItem[], overwrite: bool) {
+    set seen_paths: string[] = []
+    set seen_pkgs: string[] = []
+    for n in 0..items.len() {
+        set name = items[n].name
+        set fl = scan_package(name, items[n].root, ref items, n)
+        for i in 0..fl.len() {
+            if !eq(f_kind(fl[i]), "d") {
+                set rel = f_path(fl[i])
+                if !overwrite {
+                    for s in 0..seen_paths.len() {
+                        if eq(seen_paths[s], rel) && !eq(seen_pkgs[s], name) {
+                            panic(err(rel + " is provided by both " + seen_pkgs[s] + " and " + name, 722, name))
+                        }
+                    }
+                    if exists_any("/" + rel) {
+                        set who = owner_of(rel)
+                        if !eq(who, name) {
+                            if who.len() > 0 {
+                                panic(err(rel + " is owned by " + who, 722, name))
+                            }
+                            panic(err(rel + " already exists and belongs to no package (use --overwrite)", 722, name))
+                        }
+                    }
+                }
+                seen_paths.push(rel)
+                seen_pkgs.push(name)
+            }
+        }
+    }
 }
 
 // ── фиксация одного пакета ──────────────────────────────────────────────
@@ -370,10 +436,7 @@ fun commit_item(txid: string, ref items: ApplyItem[], n: int64, overwrite: bool)
             file_remove(tmp)
             panic(err("file changed while it was being installed: " + rel, 723, name))
         }
-        set mode: uint32 = 420
-        if eq(f_mode(fl[i]), "755") {
-            rewrite mode = 493
-        }
+        set mode: uint32 = parse_file_mode(f_mode(fl[i]))
         chmod(tmp, mode)
         chown(tmp, rootu, rootu)
         file_rename(tmp, target)
@@ -410,6 +473,7 @@ public fun apply_transaction(ref items: ApplyItem[], overwrite: bool) -> string 
     dir_create_all(tx_dir(txid))
     file_write_text(join2(tx_dir(txid), "journal"), "")
     sus {
+        precheck_all_items(ref items, overwrite)
         for n in 0..items.len() {
             commit_item(txid, ref items, n, overwrite)
         }
@@ -452,7 +516,6 @@ public fun remove_package(name: string, force: bool) -> string {
         set db_backup: string = join2(tx_db, name)
         dir_copy_all(db_dir(name), db_backup)
         jr(txid, "db " + name + " old")
-        // намерение: резервные копии и журнал до удаления
         set doomed: string[] = []
         for i in 0..files.len() {
             if !eq(f_kind(files[i]), "d") {

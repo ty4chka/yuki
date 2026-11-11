@@ -1,12 +1,8 @@
 // tarpack.ykn — упаковщик tar(.zst/.gz) для `yuki pack` и сборки из исходников.
 //
-// Свой, потому что std.fs.archives.tar.tar_pack_dir не годится для пакетов:
-// считает каталоги из dir_walk файлами (FsError на любом вложенном каталоге),
-// кладёт в архив пути с префиксом исходного каталога, ставит всем 0644
-// (теряется бит исполнения) и читает файл целиком в память.
 // Здесь: относительные имена, записи каталогов, настоящий режим файла (только rwx),
-// потоковое копирование, без setuid/setgid, mtime = 0 (воспроизводимый хеш).
-// Симлинки в пакет не кладутся: std не умеет читать их цель, политика их и не любит.
+// потоковое копирование, без setuid/setgid, mtime = 0 (воспроизводимый хеш),
+// гарантированное закрытие дескрипторов через defer.
 
 load core.utils: cast
 load core.panic: panic
@@ -82,6 +78,60 @@ fun tar_header(ref out: File, name: string, size: int64, mode: int64, is_dir: bo
     out.write(hdr.as_ptr(), 512)
 }
 
+fun pack_raw_tar(raw: string, root: string) {
+    set out = file_open_write(raw)
+    defer { out.close() }
+    set all: string[] = dir_walk(root).cp()
+    set prefix: string = root + "/"
+    set buf: uint8[16384]
+    set zeros: uint8[1024]
+    for i in 0..all.len() {
+        set p: string = all[i]
+        if !str_starts(p, prefix) {
+            continue
+        }
+        set rel: string = slice(p, prefix.len(), p.len())
+        if rel.len() == 0 {
+            continue
+        }
+        if rel.len() > 99 {
+            panic(err("path is too long for the archive (max 99 bytes): " + rel, 723, rel))
+        }
+        set md = file_metadata(p)
+        if md.is_symlink {
+            panic(err("symlinks are not allowed in a package: " + rel, 722, rel))
+        }
+        if md.is_dir {
+            tar_header(ref out, rel + "/", 0, 493, true)
+        } elif md.is_file {
+            set perm: int64 = cast(md.mode, "int64") % 512
+            tar_header(ref out, rel, md.size, perm, false)
+            set src = file_open_read(p)
+            defer { src.close() }
+            set left: int64 = md.size
+            while left > 0 {
+                set n: int64 = src.read(buf.as_ptr(), 16384)
+                if n <= 0 {
+                    break
+                }
+                if n > left {
+                    rewrite n = left
+                }
+                out.write(buf.as_ptr(), n)
+                rewrite left = left - n
+            }
+            if left != 0 {
+                panic(err("file changed while packing: " + rel, 724, rel))
+            }
+            set pad: int64 = (512 - (md.size % 512)) % 512
+            if pad > 0 {
+                out.write(zeros.as_ptr(), pad)
+            }
+        }
+    }
+    out.write(zeros.as_ptr(), 1024)
+}
+
 // Упаковать каталог root в archive. Расширение решает сжатие: .tar.zst, .tar.gz/.tgz или без сжатия.
 public fun tar_pack_tree(archive: string, root_in: string) {
     set root: string = root_in
@@ -97,60 +147,7 @@ public fun tar_pack_tree(archive: string, root_in: string) {
     if zst || gz {
         rewrite raw = archive + ".tmp.tar"
     }
-    set out = file_open_write(raw)
-    set all: string[] = dir_walk(root).cp()
-    set prefix: string = root + "/"
-    set buf: uint8[16384]
-    set zeros: uint8[1024]
-    for i in 0..all.len() {
-        set p: string = all[i]
-        if !str_starts(p, prefix) {
-            continue
-        }
-        set rel: string = slice(p, prefix.len(), p.len())
-        if rel.len() == 0 {
-            continue
-        }
-        if rel.len() > 99 {
-            out.close()
-            panic(err("path is too long for the archive (max 99 bytes): " + rel, 723, rel))
-        }
-        set md = file_metadata(p)
-        if md.is_symlink {
-            out.close()
-            panic(err("symlinks are not allowed in a package: " + rel, 722, rel))
-        }
-        if md.is_dir {
-            tar_header(ref out, rel + "/", 0, 493, true)
-        } elif md.is_file {
-            set perm: int64 = cast(md.mode, "int64") % 512
-            tar_header(ref out, rel, md.size, perm, false)
-            set src = file_open_read(p)
-            set left: int64 = md.size
-            while left > 0 {
-                set n: int64 = src.read(buf.as_ptr(), 16384)
-                if n <= 0 {
-                    break
-                }
-                if n > left {
-                    rewrite n = left
-                }
-                out.write(buf.as_ptr(), n)
-                rewrite left = left - n
-            }
-            src.close()
-            if left != 0 {
-                out.close()
-                panic(err("file changed while packing: " + rel, 724, rel))
-            }
-            set pad: int64 = (512 - (md.size % 512)) % 512
-            if pad > 0 {
-                out.write(zeros.as_ptr(), pad)
-            }
-        }
-    }
-    out.write(zeros.as_ptr(), 1024)
-    out.close()
+    pack_raw_tar(raw, root)
     if zst {
         compress_file(raw, archive, "zstd")
         file_remove(raw)
