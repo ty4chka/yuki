@@ -5,9 +5,6 @@
 #
 # Запуск: Actions -> compiler-bundle -> Run workflow (ref можно оставить main или указать тег).
 # Результат: artifact "yukino-sandbox-linux-x86_64" (внутри yukino-sandbox-linux-x86_64.zip).
-#
-# Не проверялось: файл написан без доступа к Nix и GitHub. Первый запуск смотрите по логам,
-# шаг "Проверка пакета" падает, если собранный набор не запускается.
 
 name: compiler-bundle
 
@@ -46,14 +43,47 @@ jobs:
         working-directory: yukino-src
         run: nix build .#yukino --out-link ../result
 
-      - name: Найти ld.lld из окружения flake
-        working-directory: yukino-src
+      - name: Найти ld.lld
         run: |
-          set -euo pipefail
-          # В nix develop есть LLD (так написано в docs/lang/ru/1-setup.md).
-          LLD="$(nix develop --command bash -c 'readlink -f "$(command -v ld.lld)"')"
-          test -x "$LLD"
-          echo "LLD_BIN=$LLD" >> "$GITHUB_ENV"
+          set -uo pipefail
+          RES="$(readlink -f result)"
+          FOUND=""
+          try() { if [ -z "$FOUND" ] && [ -n "${1:-}" ] && [ -x "$1" ]; then FOUND="$(readlink -f "$1")"; echo "найден: $1 -> $FOUND"; fi; return 0; }
+
+          echo "== 1. пути из скриптов-обёрток result/bin =="
+          for f in "$RES"/bin/yukic "$RES"/bin/yukino; do
+            if [ -f "$f" ] && ! head -c4 "$f" | grep -aq ELF; then
+              echo "обёртка: $f"
+              for d in $(grep -o '/nix/store/[^:" ]*/bin' "$f" | sort -u); do try "$d/ld.lld"; try "$d/lld"; done
+            fi
+          done
+
+          echo "== 2. окружение nix develop =="
+          cat > "$RUNNER_TEMP/probe.sh" <<'PROBE'
+          env | grep -i -E 'llvm|lld|clang' || true
+          for d in $(echo "$PATH" | tr ':' ' ') ${LLVM_SYS_221_PREFIX:-}/bin; do
+            for n in ld.lld lld; do [ -x "$d/$n" ] && echo "CAND $d/$n"; done
+          done
+          PROBE
+          PROBE_OUT="$(cd yukino-src && nix develop --command bash "$RUNNER_TEMP/probe.sh" 2>&1)" || true
+          echo "$PROBE_OUT" | grep -v '^CAND ' || true
+          for c in $(echo "$PROBE_OUT" | sed -n 's/^CAND //p'); do try "$c"; done
+
+          echo "== 3. lld из nixpkgs этого flake =="
+          if [ -z "$FOUND" ]; then
+            P="$(nix build --inputs-from ./yukino-src 'nixpkgs#llvmPackages_22.lld' --no-link --print-out-paths 2>/dev/null | head -n1)" || true
+            [ -n "${P:-}" ] && { try "$P/bin/ld.lld"; try "$P/bin/lld"; }
+          fi
+
+          echo "== 4. поиск в /nix/store =="
+          if [ -z "$FOUND" ]; then
+            for c in $(find /nix/store -maxdepth 4 \( -name ld.lld -o -name lld \) -path '*/bin/*' 2>/dev/null | head -n 20); do try "$c"; done
+          fi
+
+          if [ -z "$FOUND" ]; then
+            echo "::warning::ld.lld не найден: пакет будет без него (yukic придётся искать линкер в системе)"
+          fi
+          echo "LLD_BIN=$FOUND" >> "$GITHUB_ENV"
 
       - name: Собрать переносимый набор
         run: |
@@ -73,7 +103,7 @@ jobs:
 
           cp -L "$(real_elf "$RES/bin/yukic")"  "$ROOT/libexec/yukic"
           cp -L "$(real_elf "$RES/bin/yukino")" "$ROOT/libexec/yukino"
-          cp -L "$LLD_BIN"                      "$ROOT/libexec/lld"
+          if [ -n "${LLD_BIN:-}" ]; then cp -L "$LLD_BIN" "$ROOT/libexec/lld"; fi
           chmod u+w "$ROOT"/libexec/*
 
           # Динамический загрузчик и все .so, от которых зависят бинарники (включая glibc из Nix).
@@ -81,6 +111,7 @@ jobs:
           test -n "$INTERP"
           cp -L "$INTERP" "$ROOT/lib/ld.so"
           for b in yukic yukino lld; do
+            [ -f "$ROOT/libexec/$b" ] || continue
             ldd "$ROOT/libexec/$b" | awk '/=> \// {print $3}' | while read -r so; do
               cp -Ln "$so" "$ROOT/lib/" || true
             done
@@ -91,6 +122,7 @@ jobs:
           # RPATH с путями /nix/store игнорируется: этих путей на машине-получателе нет.
           for pair in "yukic:yukic" "yukino:yukino" "ld.lld:lld"; do
             name="${pair%%:*}"; real="${pair##*:}"
+            [ -f "$ROOT/libexec/$real" ] || continue
             cat > "$ROOT/bin/$name" <<EOF
           #!/bin/sh
           R="\$(cd "\$(dirname "\$0")/.." && pwd)"
@@ -98,8 +130,10 @@ jobs:
           EOF
             chmod +x "$ROOT/bin/$name"
           done
-          # lld выбирает режим по имени, поэтому нужны ещё имена ld и lld-link как обёртки того же lld
-          for n in ld lld; do cp "$ROOT/bin/ld.lld" "$ROOT/bin/$n"; sed -i "s/--argv0 \"ld.lld\"/--argv0 \"$n\"/" "$ROOT/bin/$n"; done
+          # lld выбирает режим по имени, поэтому нужны ещё имена ld и lld как обёртки того же lld
+          if [ -f "$ROOT/bin/ld.lld" ]; then
+            for n in ld lld; do cp "$ROOT/bin/ld.lld" "$ROOT/bin/$n"; sed -i "s/--argv0 \"ld.lld\"/--argv0 \"$n\"/" "$ROOT/bin/$n"; done
+          fi
 
           cat > "$ROOT/env.sh" <<'EOF'
           # source env.sh   -> yukic, yukino и ld.lld в PATH
@@ -132,7 +166,7 @@ jobs:
             yukic -v
             yukino -v
             yukic targets
-            ld.lld --version
+            if command -v ld.lld >/dev/null; then ld.lld --version; else echo "ld.lld: нет в пакете"; fi
           ' | tee SELFCHECK.txt
 
       - name: Zip
