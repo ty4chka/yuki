@@ -284,6 +284,11 @@ fun install_core(stage: string, ref roots: string[]) {
     step(2, 2, "verifying signatures and building the plan as root")
     set nodes = plan_nodes(dl, ref roots, false, true)
     show_plan(ref nodes)
+    if !flag("YUKI_YES") {
+        if !ask("Proceed with installation?", true) {
+            panic(err("aborted", 753, ""))
+        }
+    }
     set work: int64 = 0
     for i in 0..nodes.len() {
         if eq(nodes[i].action, "none") {
@@ -301,11 +306,6 @@ fun install_core(stage: string, ref roots: string[]) {
         }
         ok("everything is up to date")
         return
-    }
-    if !flag("YUKI_YES") {
-        if !ask("Proceed with installation?", true) {
-            panic(err("aborted", 753, ""))
-        }
     }
     approve_builds(stage, ref nodes)
 
