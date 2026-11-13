@@ -119,26 +119,25 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
     // родитель не блокируется: рисует панель по файлам прогресса ребёнка, сбрасывая регион на каждом шаге
     set t0 = now_ms()
     set pool_dir = join2(dl, "pool")
+    // Без region: строки скорости и активности сохраняются в полях панели и живут дольше кадра.
     while waitpid(pid, 1) == 0 {
-        region {
-            if eq(mode, "fetch") && jobmap.len() > 0 {
-                pool_paint(pool_dir, jobmap.len(), ref jobmap, t0, ref ~view)
-                for j in 0..jobmap.len() {
-                    if jobmap[j] >= 0 && pool_ok(pool_dir, j) {
-                        view.set_state(jobmap[j], 2)
-                    }
-                }
-                set act = join2(dl, "activity")
-                if file_exists(act) {
-                    sus {
-                        view.set_activity(clean_msg(file_read_text(act)))
-                    } catch {
-                        set _ign = 0
-                    }
+        if eq(mode, "fetch") && jobmap.len() > 0 {
+            pool_paint(pool_dir, jobmap.len(), ref jobmap, t0, ref ~view)
+            for j in 0..jobmap.len() {
+                if jobmap[j] >= 0 && pool_ok(pool_dir, j) {
+                    view.set_state(jobmap[j], 2)
                 }
             }
-            view.draw(false)
+            set act = join2(dl, "activity")
+            if file_exists(act) {
+                sus {
+                    view.set_activity(clean_msg(file_read_text(act)))
+                } catch {
+                    set _ign = 0
+                }
+            }
         }
+        view.draw(false)
         sleep(60u64)
     }
     kill_child_group(cast(pid, "int64"))

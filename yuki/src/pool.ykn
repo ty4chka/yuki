@@ -132,14 +132,12 @@ fun read_total(dir: string, i: int64) -> int64 {
 public fun pool_paint(dir: string, count: int64, ref nidx: int64[], t0: int64, ref ~view: InstallView) {
     set sum: int64 = 0
     for i in 0..count {
-        region {
-            set got = read_received(dir, i)
-            rewrite sum += got
-            if nidx[i] >= 0 {
-                set total = read_total(dir, i)
-                if total > 0 {
-                    view.set_pct(nidx[i], got * 100 / total)
-                }
+        set got = read_received(dir, i)
+        rewrite sum += got
+        if nidx[i] >= 0 {
+            set total = read_total(dir, i)
+            if total > 0 {
+                view.set_pct(nidx[i], got * 100 / total)
             }
         }
     }
@@ -162,35 +160,35 @@ public fun pool_run(dir: string, count: int64, parallel: int64, ref nidx: int64[
     set finished: int64 = 0
     set running: int64 = 0
     set t0 = now_ms()
+    // Без region: set_speed кладёт строку в поле панели, а region освобождает её
+    // сразу после кадра -> в следующем кадре читалась длина из указателя (SIGABRT).
     loop {
-        region {
-            while started < count && running < parallel {
-                rewrite handles[started] = spawn(cast(pool_worker, "ptr<void>"), cast(started + 1, "ptr<void>"))
-                rewrite status[started] = 1
-                if nidx[started] >= 0 {
-                    view.set_state(nidx[started], 1)
-                }
-                rewrite started += 1
-                rewrite running += 1
+        while started < count && running < parallel {
+            rewrite handles[started] = spawn(cast(pool_worker, "ptr<void>"), cast(started + 1, "ptr<void>"))
+            rewrite status[started] = 1
+            if nidx[started] >= 0 {
+                view.set_state(nidx[started], 1)
             }
-            for i in 0..started {
-                if status[i] == 1 && is_finished(handles[i]) {
-                    join(handles[i])
-                    rewrite status[i] = 2
-                    rewrite running -= 1
-                    rewrite finished += 1
-                    if nidx[i] >= 0 {
-                        if pool_ok(dir, i) {
-                            view.set_state(nidx[i], 3)
-                        } else {
-                            view.set_state(nidx[i], 4)
-                        }
+            rewrite started += 1
+            rewrite running += 1
+        }
+        for i in 0..started {
+            if status[i] == 1 && is_finished(handles[i]) {
+                join(handles[i])
+                rewrite status[i] = 2
+                rewrite running -= 1
+                rewrite finished += 1
+                if nidx[i] >= 0 {
+                    if pool_ok(dir, i) {
+                        view.set_state(nidx[i], 3)
+                    } else {
+                        view.set_state(nidx[i], 4)
                     }
                 }
             }
-            pool_paint(dir, count, ref nidx, t0, ref ~view)
-            view.draw(false)
         }
+        pool_paint(dir, count, ref nidx, t0, ref ~view)
+        view.draw(false)
         if finished >= count {
             break
         }
