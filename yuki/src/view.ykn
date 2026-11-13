@@ -40,7 +40,7 @@ public class InstallView {
     fun init(title: string, animated: bool) {
         rewrite this.animated = animated
         rewrite this.area = init LiveArea()
-        rewrite this.title = title
+        rewrite this.title = title + ""
         rewrite this.names = []
         rewrite this.versions = []
         rewrite this.parents = []
@@ -55,8 +55,8 @@ public class InstallView {
     }
 
     public fun add_node(name: string, version: string, parent: int64) -> int64 {
-        this.names.push(name)
-        this.versions.push(version)
+        this.names.push(name + "")
+        this.versions.push(version + "")
         this.parents.push(parent)
         this.states.push(0)
         this.pcts.push(0)
@@ -79,11 +79,11 @@ public class InstallView {
     }
 
     public fun set_speed(text: string) {
-        rewrite this.speed = text
+        rewrite this.speed = text + ""
     }
 
     public fun set_activity(text: string) {
-        rewrite this.activity = text
+        rewrite this.activity = text + ""
     }
 
     // Строка в обычном режиме; при живой панели молчит, чтобы не ломать перерисовку.
@@ -96,7 +96,7 @@ public class InstallView {
     // Перейти к фазе p; note описывает результат предыдущей.
     public fun set_phase(p: int64, note: string) {
         if p > 0 && p <= 3 {
-            rewrite this.notes[p - 1] = note
+            rewrite this.notes[p - 1] = note + ""
         }
         rewrite this.phase = p
         if !this.animated {
