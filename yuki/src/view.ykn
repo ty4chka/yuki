@@ -138,7 +138,8 @@ public class InstallView {
 
     fun spin() -> string {
         set fr = spinner_frames()
-        return fr[this.tick % fr.len()]
+        // + "" обязателен: элемент локального массива нельзя отдавать наружу
+        return fr[this.tick % fr.len()] + ""
     }
 
     fun node_state(i: int64) -> string {

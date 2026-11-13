@@ -328,7 +328,7 @@ public fun paint(role: string, text: string) -> string {
 }
 
 fun base_of(spec: string) -> string {
-    return str_split(spec, "+")[0]
+    return str_split(spec, "+")[0] + ""
 }
 
 // Цвет i-й ячейки полосы: плавный переход accent → good, если оба заданы как #rrggbb

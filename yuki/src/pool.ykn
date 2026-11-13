@@ -210,7 +210,7 @@ public fun pool_out(dir: string, i: int64) -> string {
     if l.len() < 2 {
         return ""
     }
-    return str_split(l[1], "\t")[0]
+    return str_split(l[1], "\t")[0] + ""
 }
 
 public fun pool_bytes(dir: string, i: int64) -> int64 {

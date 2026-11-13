@@ -118,15 +118,15 @@ public fun db_remove(name: string) {
 
 // разбор строки files
 public fun f_hash(line: string) -> string {
-    return str_split(line, " ")[0]
+    return str_split(line, " ")[0] + ""
 }
 
 public fun f_mode(line: string) -> string {
-    return str_split(line, " ")[1]
+    return str_split(line, " ")[1] + ""
 }
 
 public fun f_kind(line: string) -> string {
-    return str_split(line, " ")[2]
+    return str_split(line, " ")[2] + ""
 }
 
 public fun f_path(line: string) -> string {

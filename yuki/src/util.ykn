@@ -136,11 +136,11 @@ public fun valid_dep_spec(s: string) -> bool {
 }
 
 public fun dep_name(s: string) -> string {
-    return str_split(s, "@")[0]
+    return str_split(s, "@")[0] + ""
 }
 
 public fun dep_version(s: string) -> string {
-    return str_split(s, "@")[1]
+    return str_split(s, "@")[1] + ""
 }
 
 // Для подсказки «did you mean»: число правок между словами.
