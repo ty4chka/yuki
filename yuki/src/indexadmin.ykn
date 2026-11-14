@@ -180,8 +180,13 @@ public fun cmd_index_add(file: string, keyname: string) {
         }
     }
     set repo = rj.get("repository").as_string_or("")
-    if repo.len() > 0 && !check_url(repo) {
-        panic(err("repository must be a working https url", 219, file))
+    if repo.len() > 0 {
+        // check_url паникует на плохом url (void), поэтому оборачиваем
+        sus {
+            check_url(repo)
+        } catch {
+            panic(err("repository must be a working https url", 219, file))
+        }
     }
 
     step(1, 3, "checking artifacts for " + c_accent(name + " " + version))
