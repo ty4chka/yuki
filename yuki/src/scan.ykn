@@ -47,71 +47,71 @@ fun look(t: string, file: string, ref hits: ScanHit[], ref ~n: int64) {
     set dl = contains(t, "curl") || contains(t, "wget")
     set piped = contains(t, "| sh") || contains(t, "|sh ") || contains(t, "| bash") || contains(t, "|bash")
     if dl && piped {
-        add_hit(ref hits, ref n, "high", file, "pipes a downloaded script straight into a shell")
+        add_hit(ref hits, ref ~n, "high", file, "pipes a downloaded script straight into a shell")
     }
     // обратные шеллы
     if contains(t, "/dev/tcp/") {
-        add_hit(ref hits, ref n, "high", file, "opens a raw reverse shell over /dev/tcp")
+        add_hit(ref hits, ref ~n, "high", file, "opens a raw reverse shell over /dev/tcp")
     }
     if contains(t, "bash -i >&") {
-        add_hit(ref hits, ref n, "high", file, "relays an interactive bash over the network")
+        add_hit(ref hits, ref ~n, "high", file, "relays an interactive bash over the network")
     }
     if contains(t, "nc -e ") || contains(t, "ncat -e ") {
-        add_hit(ref hits, ref n, "high", file, "hands a shell to the network with netcat -e")
+        add_hit(ref hits, ref ~n, "high", file, "hands a shell to the network with netcat -e")
     }
     // закрепление и доступ
     if contains(t, "authorized_keys") {
-        add_hit(ref hits, ref n, "high", file, "touches ssh authorized_keys (backdoor access)")
+        add_hit(ref hits, ref ~n, "high", file, "touches ssh authorized_keys (backdoor access)")
     }
     if contains(t, "ld.so.preload") {
-        add_hit(ref hits, ref n, "high", file, "installs an ld.so.preload hook (rootkit trick)")
+        add_hit(ref hits, ref ~n, "high", file, "installs an ld.so.preload hook (rootkit trick)")
     }
     if contains(t, "systemctl enable") {
-        add_hit(ref hits, ref n, "med", file, "installs a systemd service (persistence)")
+        add_hit(ref hits, ref ~n, "med", file, "installs a systemd service (persistence)")
     }
     if contains(t, "/etc/cron") || contains(t, "crontab ") {
-        add_hit(ref hits, ref n, "med", file, "installs a cron job (persistence)")
+        add_hit(ref hits, ref ~n, "med", file, "installs a cron job (persistence)")
     }
     // разрушение и секреты
     if contains(t, "rm -rf /") {
-        add_hit(ref hits, ref n, "high", file, "destructive `rm -rf /`")
+        add_hit(ref hits, ref ~n, "high", file, "destructive `rm -rf /`")
     }
     if contains(t, "/etc/shadow") {
-        add_hit(ref hits, ref n, "high", file, "reads /etc/shadow password hashes")
+        add_hit(ref hits, ref ~n, "high", file, "reads /etc/shadow password hashes")
     }
     // майнеры
     set mine = contains(t, "stratum+tcp") || contains(t, "stratum+ssl") || contains(t, "cryptonight") || contains(t, "xmrig") || contains(t, "minerd")
     if mine {
-        add_hit(ref hits, ref n, "high", file, "cryptocurrency miner strings")
+        add_hit(ref hits, ref ~n, "high", file, "cryptocurrency miner strings")
     }
     // скрытые payload'ы
     set b64 = contains(t, "base64 -d") || contains(t, "base64 --decode") || contains(t, "openssl enc -d")
     if b64 {
-        add_hit(ref hits, ref n, "med", file, "decodes a hidden payload (base64/openssl)")
+        add_hit(ref hits, ref ~n, "med", file, "decodes a hidden payload (base64/openssl)")
     }
     if contains(t, "eval") && contains(t, "base64") {
-        add_hit(ref hits, ref n, "high", file, "eval of base64-decoded text (obfuscated code)")
+        add_hit(ref hits, ref ~n, "high", file, "eval of base64-decoded text (obfuscated code)")
     }
     // права и модули
     if contains(t, "chmod u+s") || contains(t, "chmod +s") || contains(t, "chmod 4755") || contains(t, "chmod 6755") {
-        add_hit(ref hits, ref n, "med", file, "sets setuid bits")
+        add_hit(ref hits, ref ~n, "med", file, "sets setuid bits")
     }
     if contains(t, "insmod ") || contains(t, "modprobe ") {
-        add_hit(ref hits, ref n, "med", file, "loads kernel modules")
+        add_hit(ref hits, ref ~n, "med", file, "loads kernel modules")
     }
     // заметание следов
     if contains(t, "history -c") || contains(t, "shred -") || contains(t, "wevtutil") {
-        add_hit(ref hits, ref n, "med", file, "clears logs / covers tracks")
+        add_hit(ref hits, ref ~n, "med", file, "clears logs / covers tracks")
     }
     if contains(t, "pastebin.com") {
-        add_hit(ref hits, ref n, "med", file, "pulls content from a paste service")
+        add_hit(ref hits, ref ~n, "med", file, "pulls content from a paste service")
     }
     // мелочи
     if contains(t, "telemetry") || contains(t, "phone home") {
-        add_hit(ref hits, ref n, "low", file, "mentions telemetry / phoning home")
+        add_hit(ref hits, ref ~n, "low", file, "mentions telemetry / phoning home")
     }
     if contains(t, "icanhazip") || contains(t, "ifconfig.me") || contains(t, "checkip.amazonaws") {
-        add_hit(ref hits, ref n, "low", file, "checks your public ip")
+        add_hit(ref hits, ref ~n, "low", file, "checks your public ip")
     }
 }
 
@@ -165,7 +165,7 @@ fun scan_tree(base: string, sub: string, depth: int64, ref hits: ScanHit[], ref 
             space
         }
         if isdir {
-            scan_tree(base, rel, depth + 1, ref hits, ref n, ref files)
+            scan_tree(base, rel, depth + 1, ref hits, ref ~n, ref ~files)
             continue
         }
         rewrite files += 1
@@ -192,7 +192,7 @@ public fun scan_dir(root: string) -> ScanHit[] {
     set hits: ScanHit[] = []
     set n: int64 = 0
     set files: int64 = 0
-    scan_tree(root, "", 0, ref hits, ref n, ref files)
+    scan_tree(root, "", 0, ref hits, ref ~n, ref ~files)
     return hits
 }
 
