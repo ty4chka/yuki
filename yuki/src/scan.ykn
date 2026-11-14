@@ -183,7 +183,7 @@ fun scan_tree(base: string, sub: string, depth: int64, ref hits: ScanHit[], ref 
         if !okf || text.len() == 0 {
             continue
         }
-        look(str_lower(text), rel, ref hits, ref n)
+        look(str_lower(text), rel, ref hits, ref ~n)
     }
 }
 
