@@ -287,7 +287,8 @@ public fun cmd_profile_install(name: string) {
         panic(err("profile \"" + name + "\" has no packages", 766, name))
     }
     set n_pk = pk.len()
-    println("  " + c_accent(name) + " " + c_dim(source + " profile, " + cast(n_pk, "string") + " " + plural(n_pk, "package", "packages") + ": " + sjoin(pk, ", ")))
+    set listing = sjoin(pk, ", ")
+    println("  " + c_accent(name) + " " + c_dim(source + " profile, " + cast(n_pk, "string") + " " + plural(n_pk, "package", "packages") + ": " + listing))
     cmd_sys_install_many(ref pk)
 }
 
