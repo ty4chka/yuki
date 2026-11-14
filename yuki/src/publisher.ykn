@@ -34,7 +34,7 @@ public fun pub_doc() -> JsonValue {
 }
 
 // Имя издателя пакета из каталога ("" — поле не задано).
-public fun pub_name_in(doc: JsonValue, pkg: string) -> string {
+public fun pub_name_in(ref doc: JsonValue, pkg: string) -> string {
     set pk = doc.get("packages")
     for i in 0..pk.len() {
         if eq(pk.at(i).get("name").as_string_or(""), pkg) {
@@ -44,25 +44,23 @@ public fun pub_name_in(doc: JsonValue, pkg: string) -> string {
     return ""
 }
 
-// Профиль издателя по имени; found = false, если в каталоге его нет.
-public fun pub_in(doc: JsonValue, name: string, ref found: bool) -> JsonValue {
+// Индекс профиля издателя по имени; -1 — в каталоге его нет.
+// JsonValue передаётся по ref: класс, по значению это move (в цикле нельзя).
+public fun pub_index(ref doc: JsonValue, name: string) -> int64 {
     set ps = doc.get("publishers")
     for i in 0..ps.len() {
         if eq(ps.at(i).get("name").as_string_or(""), name) {
-            rewrite found = true
-            return ps.at(i)
+            return i
         }
     }
-    rewrite found = false
-    return ps
+    return -1
 }
 
 // Как показывать издателя: display, а без него — name.
-public fun pub_display_in(doc: JsonValue, name: string) -> string {
-    set found = false
-    set pub = pub_in(doc, name, ref found)
-    if found {
-        set d = pub.get("display").as_string_or("")
+public fun pub_display_in(ref doc: JsonValue, name: string) -> string {
+    set pi = pub_index(ref doc, name)
+    if pi >= 0 {
+        set d = doc.get("publishers").at(pi).get("display").as_string_or("")
         if d.len() > 0 {
             return d
         }
@@ -71,11 +69,11 @@ public fun pub_display_in(doc: JsonValue, name: string) -> string {
 }
 
 // Платформы издателя одной строкой: github.com/X · gitlab.com/Y · homepage
-public fun pub_links_in(doc: JsonValue, name: string) -> string {
-    set found = false
-    set pub = pub_in(doc, name, ref found)
+public fun pub_links_in(ref doc: JsonValue, name: string) -> string {
     set parts: string[] = []
-    if found {
+    set pi = pub_index(ref doc, name)
+    if pi >= 0 {
+        set pub = doc.get("publishers").at(pi)
         set gh = pub.get("github").as_string_or("")
         set gl = pub.get("gitlab").as_string_or("")
         set hp = pub.get("homepage").as_string_or("")
@@ -98,8 +96,12 @@ fun norm_fp(s: string) -> string {
 }
 
 // Подпись релиза входит в ключи издателя?
-public fun pub_has_key(pub: JsonValue, signer: string) -> bool {
-    set ks = pub.get("keys")
+public fun pub_has_key(ref doc: JsonValue, name: string, signer: string) -> bool {
+    set pi = pub_index(ref doc, name)
+    if pi < 0 {
+        return false
+    }
+    set ks = doc.get("publishers").at(pi).get("keys")
     set want = norm_fp(signer)
     for i in 0..ks.len() {
         if eq(norm_fp(ks.at(i).as_string_or("")), want) {
@@ -127,25 +129,25 @@ public fun cmd_publisher_list() {
                 rewrite n += 1
             }
         }
-        println("  " + c_good(sym("ok")) + " " + c_accent(str_pad_end(nm, 16)) + c_dim(pub_links_in(doc, nm)) + " " + c_dim(cast(n, "string") + " " + plural(n, "package", "packages")))
+        println("  " + c_good(sym("ok")) + " " + c_accent(str_pad_end(nm, 16)) + c_dim(pub_links_in(ref doc, nm)) + " " + c_dim(cast(n, "string") + " " + plural(n, "package", "packages")))
     }
     info("details: `yuki publisher show <name>`")
 }
 
 public fun cmd_publisher_show(name: string) {
     set doc = pub_doc()
-    set found = false
-    set pub = pub_in(doc, name, ref found)
-    if !found {
+    set pi = pub_index(ref doc, name)
+    if pi < 0 {
         panic(err("no such publisher in the catalog: \"" + name + "\"", 770, name))
     }
+    set pub = doc.get("publishers").at(pi)
     set disp = pub.get("display").as_string_or("")
     if disp.len() == 0 {
         rewrite disp = name
     }
     set rows: string[] = []
     rows.push(c_good(sym("ok") + " " + disp) + c_dim("  publisher profile"))
-    set links = pub_links_in(doc, name)
+    set links = pub_links_in(ref doc, name)
     if links.len() > 0 {
         rows.push("  " + c_dim("links") + "  " + links)
     }

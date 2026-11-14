@@ -585,20 +585,21 @@ public fun cmd_index_catalog(keyname: string) {
         panic(err(pberr[0] + " (fix publishers.json)", 224, "publishers.json"))
     }
     root.set("publishers", read_publishers_doc().cp())
+    set n_prof = root.get("profiles").len()
+    set n_pubs = root.get("publishers").len()
     set text = json_pretty(root) + "\n"
     file_write_text("catalog.json", text)
     file_write_text("catalog.json.sig", sign_text(keyname, text) + "\n")
     set ptail = ""
-    set prof = root.get("profiles")
-    if prof.len() > 0 {
-        rewrite ptail = ", " + cast(prof.len(), "string") + " profiles"
+    if n_prof > 0 {
+        rewrite ptail = ", " + cast(n_prof, "string") + " profiles"
     }
     set pbtail = ""
-    set pbs = root.get("publishers")
-    if pbs.len() > 0 {
-        rewrite pbtail = ", " + cast(pbs.len(), "string") + " publisher(s)"
+    if n_pubs > 0 {
+        rewrite pbtail = ", " + cast(n_pubs, "string") + " publisher(s)"
     }
-    ok("wrote catalog.json and .sig " + c_dim(cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages") + ptail + pbtail + ", seq " + cast(seq, "string")))
+    set n_pk = pk.len()
+    ok("wrote catalog.json and .sig " + c_dim(cast(n_pk, "string") + " " + plural(n_pk, "package", "packages") + ptail + pbtail + ", seq " + cast(seq, "string")))
 }
 
 // ── renew-all ───────────────────────────────────────────────────────────

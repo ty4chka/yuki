@@ -69,7 +69,7 @@ fun load_profile(name: string) -> JsonValue {
 }
 
 // Запись через временный файл и rename: профиль не остаётся наполовину записанным.
-fun save_profile(name: string, pkgs: string[]) {
+fun save_profile(name: string, ref pkgs: string[]) {
     dir_create_all(prof_dir())
     set arr = json_array([])
     for i in 0..pkgs.len() {
@@ -126,7 +126,7 @@ fun catalog_profiles() -> JsonValue {
 }
 
 // Найти профиль: сначала свой, потом кураторский из каталога.
-fun find_profile(name: string, ref source: string) -> string[] {
+fun find_profile(name: string, ref ~source: string) -> string[] {
     if valid_name(name) && file_exists(prof_path(name)) {
         rewrite source = "local"
         return profile_pkgs(load_profile(name))
@@ -196,11 +196,12 @@ public fun cmd_profile_add(name: string, ref pkgs: string[]) {
     } catch {
         // каталог недоступен — добавляем без сверки
     }
-    save_profile(name, all)
+    set n_all = all.len()
+    save_profile(name, ref all)
     if have {
-        ok("profile " + c_accent(name) + " updated: " + c_dim(cast(all.len(), "string") + " " + plural(all.len(), "package", "packages")))
+        ok("profile " + c_accent(name) + " updated: " + c_dim(cast(n_all, "string") + " " + plural(n_all, "package", "packages")))
     } else {
-        ok("profile " + c_accent(name) + " created: " + c_dim(cast(all.len(), "string") + " " + plural(all.len(), "package", "packages")))
+        ok("profile " + c_accent(name) + " created: " + c_dim(cast(n_all, "string") + " " + plural(n_all, "package", "packages")))
     }
     println("      " + c_dim(sjoin(all, ", ")))
     info("install everything with `sudo yuki profile install " + name + "`")
@@ -232,8 +233,9 @@ public fun cmd_profile_remove(name: string, ref pkgs: string[]) {
         ok("profile " + c_accent(name) + " removed (no packages left)")
         return
     }
-    save_profile(name, all)
-    ok("profile " + c_accent(name) + " updated: " + c_dim(cast(all.len(), "string") + " " + plural(all.len(), "package", "packages")))
+    set n_all = all.len()
+    save_profile(name, ref all)
+    ok("profile " + c_accent(name) + " updated: " + c_dim(cast(n_all, "string") + " " + plural(n_all, "package", "packages")))
 }
 
 // ── profile list / show / install ───────────────────────────────────────
@@ -264,7 +266,7 @@ public fun cmd_profile_list() {
 
 public fun cmd_profile_show(name: string) {
     set source = ""
-    set pk = find_profile(name, ref source)
+    set pk = find_profile(name, ref ~source)
     set rows: string[] = []
     rows.push(c_accent(name) + "  " + c_dim(source + " profile, " + cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages")))
     for i in 0..pk.len() {
@@ -280,11 +282,12 @@ public fun cmd_profile_show(name: string) {
 
 public fun cmd_profile_install(name: string) {
     set source = ""
-    set pk = find_profile(name, ref source)
+    set pk = find_profile(name, ref ~source)
     if pk.len() == 0 {
         panic(err("profile \"" + name + "\" has no packages", 766, name))
     }
-    println("  " + c_accent(name) + " " + c_dim(source + " profile, " + cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages") + ": " + sjoin(pk, ", ")))
+    set n_pk = pk.len()
+    println("  " + c_accent(name) + " " + c_dim(source + " profile, " + cast(n_pk, "string") + " " + plural(n_pk, "package", "packages") + ": " + sjoin(pk, ", ")))
     cmd_sys_install_many(ref pk)
 }
 
@@ -342,7 +345,7 @@ public fun cmd_catalog(query: string) {
             }
             set pn = pk.at(i).get("publisher").as_string_or("")
             if pn.len() > 0 {
-                println("      " + c_good(sym("ok") + " " + pub_display_in(doc, pn)) + c_dim("  " + pub_links_in(doc, pn)))
+                println("      " + c_good(sym("ok") + " " + pub_display_in(ref doc, pn)) + c_dim("  " + pub_links_in(ref doc, pn)))
             }
             rewrite shown += 1
         }
@@ -386,7 +389,7 @@ public fun cmd_tags(prefix: string) {
     }
     // сортировка выбором по числу пакетов
     for i in 0..names.len() {
-        set best = i
+        set best: int64 = i
         for k in (i + 1)..names.len() {
             if counts[k] > counts[best] {
                 rewrite best = k

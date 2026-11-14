@@ -154,7 +154,7 @@ public fun cmd_outdated() {
 
 
 // Издатель пакета: имя для показа и платформы (читаем прямо из каталога).
-fun pub_disp(doc: JsonValue, name: string) -> string {
+fun pub_disp(ref doc: JsonValue, name: string) -> string {
     set ps = doc.get("publishers")
     for i in 0..ps.len() {
         if eq(ps.at(i).get("name").as_string_or(""), name) {
@@ -167,7 +167,7 @@ fun pub_disp(doc: JsonValue, name: string) -> string {
     return name
 }
 
-fun pub_links(doc: JsonValue, name: string) -> string {
+fun pub_links(ref doc: JsonValue, name: string) -> string {
     set ps = doc.get("publishers")
     for i in 0..ps.len() {
         if eq(ps.at(i).get("name").as_string_or(""), name) {
@@ -240,7 +240,7 @@ public fun cmd_search(term: string) {
             }
             set pn = pk.at(i).get("publisher").as_string_or("")
             if pn.len() > 0 {
-                println("      " + c_good(sym("ok") + " " + pub_disp(doc, pn)) + c_dim("  " + pub_links(doc, pn)))
+                println("      " + c_good(sym("ok") + " " + pub_disp(ref doc, pn)) + c_dim("  " + pub_links(ref doc, pn)))
             }
             rewrite shown += 1
         }

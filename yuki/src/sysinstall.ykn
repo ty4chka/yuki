@@ -32,7 +32,7 @@ load .sysplan: PNode, plan_nodes, spec_name, spec_ver
 load .sysbuild: build_policy
 load .pipeline: archive_ext
 load .scan: scan_dir, print_report
-load .publisher: pub_doc, pub_name_in, pub_in, pub_has_key, pub_display_in, pub_links_in
+load .publisher: pub_doc, pub_name_in, pub_index, pub_has_key, pub_display_in, pub_links_in
 load .policy: policy_check, policy_check_link
 load .verify: VerifyError, check_blake3, audit_tar
 load .apply: ApplyItem, apply_transaction, remove_package, rollback_locked, check_package
@@ -91,20 +91,18 @@ fun show_plan(ref nodes: PNode[]) {
     // издатель: подпись релиза должна сходиться с ключами его профиля
     set cat = pub_doc()
     for i in 0..nodes.len() {
-        set pn = pub_name_in(cat, nodes[i].rel.name)
+        set pn = pub_name_in(ref cat, nodes[i].rel.name)
         if eq(pn, "") {
             continue
         }
-        set pfound = false
-        set pub = pub_in(cat, pn, ref pfound)
-        if !pfound {
+        if pub_index(ref cat, pn) < 0 {
             println("    " + c_warn(sym("warn")) + " " + nodes[i].rel.name + c_dim(" " + sym("arrow") + " publisher ") + c_accent(pn) + c_warn(" is not in the catalog"))
             continue
         }
-        if pub_has_key(pub, nodes[i].rel.signer) {
-            println("    " + c_good(sym("ok")) + " " + c_accent(pub_display_in(cat, pn)) + c_dim(" (" + pub_links_in(cat, pn) + ") signs " + nodes[i].rel.name + " with " + nodes[i].rel.signer))
+        if pub_has_key(ref cat, pn, nodes[i].rel.signer) {
+            println("    " + c_good(sym("ok")) + " " + c_accent(pub_display_in(ref cat, pn)) + c_dim(" (" + pub_links_in(ref cat, pn) + ") signs " + nodes[i].rel.name + " with " + nodes[i].rel.signer))
         } else {
-            println("    " + c_bad(sym("fail")) + " " + c_accent(pub_display_in(cat, pn)) + c_bad(" signer " + nodes[i].rel.signer + " is NOT among the keys of the publisher for " + nodes[i].rel.name + " — re-check"))
+            println("    " + c_bad(sym("fail")) + " " + c_accent(pub_display_in(ref cat, pn)) + c_bad(" signer " + nodes[i].rel.signer + " is NOT among the keys of the publisher for " + nodes[i].rel.name + " — re-check"))
         }
     }
     println("")

@@ -33,7 +33,7 @@ static MAX_HITS: int64 = 40
 static MAX_FILES: int64 = 1500
 static MAX_BYTES: int64 = 262144   // текстовые файлы крупнее 256 KiB не читаем
 
-fun add_hit(ref hits: ScanHit[], ref n: int64, sev: string, file: string, why: string) {
+fun add_hit(ref hits: ScanHit[], ref ~n: int64, sev: string, file: string, why: string) {
     if n >= MAX_HITS {
         return
     }
@@ -42,7 +42,7 @@ fun add_hit(ref hits: ScanHit[], ref n: int64, sev: string, file: string, why: s
 }
 
 // Одна эвристика = один if. Паттерны ищутся в нижнем регистре содержимого файла.
-fun look(t: string, file: string, ref hits: ScanHit[], ref n: int64) {
+fun look(t: string, file: string, ref hits: ScanHit[], ref ~n: int64) {
     // скачать и сразу выполнить
     set dl = contains(t, "curl") || contains(t, "wget")
     set piped = contains(t, "| sh") || contains(t, "|sh ") || contains(t, "| bash") || contains(t, "|bash")
@@ -117,7 +117,7 @@ fun look(t: string, file: string, ref hits: ScanHit[], ref n: int64) {
 
 // Рекурсивный обход дерева пакета с бюджетом: не глубже 8, не больше MAX_FILES,
 // docs/man пропускаем, крупные и бинарные файлы не читаем.
-fun scan_tree(base: string, sub: string, depth: int64, ref hits: ScanHit[], ref n: int64, ref files: int64) {
+fun scan_tree(base: string, sub: string, depth: int64, ref hits: ScanHit[], ref ~n: int64, ref ~files: int64) {
     if depth > 8 || files >= MAX_FILES {
         return
     }
@@ -131,6 +131,7 @@ fun scan_tree(base: string, sub: string, depth: int64, ref hits: ScanHit[], ref 
         rewrite ls = dir_list(dir)
         rewrite okd = true
     } catch {
+        space
     }
     if !okd {
         return
@@ -161,6 +162,7 @@ fun scan_tree(base: string, sub: string, depth: int64, ref hits: ScanHit[], ref 
             rewrite probe = dir_list(full)
             rewrite isdir = true
         } catch {
+            space
         }
         if isdir {
             scan_tree(base, rel, depth + 1, ref hits, ref n, ref files)
@@ -176,6 +178,7 @@ fun scan_tree(base: string, sub: string, depth: int64, ref hits: ScanHit[], ref 
             rewrite text = file_read_text(full)
             rewrite okf = true
         } catch {
+            space
         }
         if !okf || text.len() == 0 {
             continue
