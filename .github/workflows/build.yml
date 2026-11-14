@@ -69,12 +69,18 @@ jobs:
                       sys.exit("патч не применился: %s в %s" % (pat, path))
                   print("patched", path, pat, n)
               open(path, "w", encoding="utf-8").write(s)
+          # Yukino runtime ABI: these helpers receive the result pointer in x0.
+          # LLVM's sret attribute moves it to x8 on AArch64. Remove the attribute
+          # from both declarations and call sites; otherwise strings become garbage
+          # only when the live panel exercises the helper on ARM.
           patch("crates/yukic-codegen/src/intrinsic.rs", [
-              r"[ \t]*f\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\n",
-              r"[ \t]*call\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\n",
+              r"(?m)^[ \t]*f\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\r?\n",
+              r"(?m)^[ \t]*call\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\r?\n",
           ])
+          # Keep the compiler's own generated regional returns explicit; do not
+          # apply an LLVM sret attribute to the user ABI's destination parameter.
           patch("crates/yukic-codegen/src/body/mod.rs", [
-              r"[ \t]*f\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\n",
+              r"(?m)^[ \t]*f\.add_attribute\(AttributeLoc::Param\(0\), sret_attr\);\r?\n",
           ])
           PY
           YUKINO_RELEASEBUILD=1 cargo build --release --bin yukic --bin yukino

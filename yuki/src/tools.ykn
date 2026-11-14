@@ -6,7 +6,7 @@ load core.utils: cast
 load core.panic: panic
 load std.io: print, println
 load std.env: get_or
-load std.json: json_parse
+load std.json: JsonValue, json_parse
 load std.fs.files: file_exists, file_read_text, file_write_text, file_remove, file_metadata, file_size
 load std.fs.dirs: dir_exists, dir_walk, dir_remove_all, dir_create_all
 load std.hash.blake3: blake3_file
@@ -199,15 +199,72 @@ fun verified_catalog() -> string {
     return text
 }
 
+// Издатель пакета: имя для показа и платформы (читаем прямо из каталога).
+fun pub_disp(doc: JsonValue, name: string) -> string {
+    set ps = doc.get("publishers")
+    for i in 0..ps.len() {
+        if eq(ps.at(i).get("name").as_string_or(""), name) {
+            set d = ps.at(i).get("display").as_string_or("")
+            if d.len() > 0 {
+                return d
+            }
+        }
+    }
+    return name
+}
+
+fun pub_links(doc: JsonValue, name: string) -> string {
+    set ps = doc.get("publishers")
+    for i in 0..ps.len() {
+        if eq(ps.at(i).get("name").as_string_or(""), name) {
+            set parts: string[] = []
+            set gh = ps.at(i).get("github").as_string_or("")
+            set gl = ps.at(i).get("gitlab").as_string_or("")
+            if gh.len() > 0 {
+                parts.push("github.com/" + gh)
+            }
+            if gl.len() > 0 {
+                parts.push("gitlab.com/" + gl)
+            }
+            return sjoin(parts, " · ")
+        }
+    }
+    return ""
+}
+
+// Поиск по имени, резюме и тегам; `tag:x` — точное совпадение тега.
 public fun cmd_search(term: string) {
     set doc = json_parse(verified_catalog())
     set pk = doc.get("packages")
+    set tagmode = str_starts(term, "tag:")
     set q = str_lower(term)
+    if tagmode {
+        rewrite q = str_lower(slice(term, 4, term.len()))
+    }
     set shown: int64 = 0
     for i in 0..pk.len() {
         set nm = pk.at(i).get("name").as_string_or("")
         set sm = pk.at(i).get("summary").as_string_or("")
-        if contains(str_lower(nm), q) || contains(str_lower(sm), q) {
+        set pass = false
+        if tagmode {
+            set tg = pk.at(i).get("tags")
+            for k in 0..tg.len() {
+                if eq(str_lower(tg.at(k).as_string_or("")), q) {
+                    rewrite pass = true
+                }
+            }
+        } else {
+            rewrite pass = contains(str_lower(nm), q) || contains(str_lower(sm), q)
+            if !pass {
+                set tg = pk.at(i).get("tags")
+                for k in 0..tg.len() {
+                    if contains(str_lower(tg.at(k).as_string_or("")), q) {
+                        rewrite pass = true
+                    }
+                }
+            }
+        }
+        if pass {
             set mark = ""
             if db_has(nm) {
                 rewrite mark = " " + c_good("[installed]")
@@ -215,6 +272,21 @@ public fun cmd_search(term: string) {
             println("  " + c_accent(nm) + " " + c_good(pk.at(i).get("version").as_string_or("")) + " " + c_dim(pk.at(i).get("kind").as_string_or("")) + mark)
             if sm.len() > 0 {
                 println("      " + c_dim(sm))
+            }
+            set parts: string[] = []
+            set tg = pk.at(i).get("tags")
+            for k in 0..tg.len() {
+                set t = tg.at(k).as_string_or("")
+                if t.len() > 0 {
+                    parts.push(t)
+                }
+            }
+            if parts.len() > 0 {
+                println("      " + c_dim("tags: " + sjoin(parts, ", ")))
+            }
+            set pn = pk.at(i).get("publisher").as_string_or("")
+            if pn.len() > 0 {
+                println("      " + c_good(sym("ok") + " " + pub_disp(doc, pn)) + c_dim("  " + pub_links(doc, pn)))
             }
             rewrite shown += 1
         }

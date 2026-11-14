@@ -1,0 +1,172 @@
+// publisher.ykn — профили издателей каталога: кто стоит за пакетом.
+//
+// publishers.json в репозитории индекса (необязательный файл):
+// [
+//   {
+//     "name": "json-yukino",          // a-z, 0-9, _ и -
+//     "display": "json-yukino maintainers",
+//     "summary": "the people behind the json-yukino packages",
+//     "github": "json-yukino",        // аккаунт на GitHub (можно пусто)
+//     "gitlab": "",                   // аккаунт на GitLab (можно пусто)
+//     "homepage": "https://…",
+//     "keys": ["3fa9 c07d"]           // отпечатки ключей издателя
+//   }
+// ]
+//
+// Пакет ссылается на издателя полем "publisher" в release.json: поле попадает
+// в запись индекса (write_entry) и в catalog.json. Верификация честная:
+// подпись релиза (signer) должна быть среди keys издателя — тогда
+// install/catalog/search показывают ✓, иначе ✘ с советом пересмотреть решение.
+
+load core.panic: panic
+load std.io: println
+load std.json: JsonValue, json_parse
+load std.strings: eq
+load .errors: YukiError, err
+load .tools: verified_catalog
+load .ui: info, card, c_accent, c_good, c_dim
+load .theme: sym
+load .util: sjoin, str_split, str_pad_end, plural
+
+// Подписанный каталог одним куском (одна загрузка на команду).
+public fun pub_doc() -> JsonValue {
+    return json_parse(verified_catalog())
+}
+
+// Имя издателя пакета из каталога ("" — поле не задано).
+public fun pub_name_in(doc: JsonValue, pkg: string) -> string {
+    set pk = doc.get("packages")
+    for i in 0..pk.len() {
+        if eq(pk.at(i).get("name").as_string_or(""), pkg) {
+            return pk.at(i).get("publisher").as_string_or("")
+        }
+    }
+    return ""
+}
+
+// Профиль издателя по имени; found = false, если в каталоге его нет.
+public fun pub_in(doc: JsonValue, name: string, ref found: bool) -> JsonValue {
+    set ps = doc.get("publishers")
+    for i in 0..ps.len() {
+        if eq(ps.at(i).get("name").as_string_or(""), name) {
+            rewrite found = true
+            return ps.at(i)
+        }
+    }
+    rewrite found = false
+    return ps
+}
+
+// Как показывать издателя: display, а без него — name.
+public fun pub_display_in(doc: JsonValue, name: string) -> string {
+    set found = false
+    set pub = pub_in(doc, name, ref found)
+    if found {
+        set d = pub.get("display").as_string_or("")
+        if d.len() > 0 {
+            return d
+        }
+    }
+    return name
+}
+
+// Платформы издателя одной строкой: github.com/X · gitlab.com/Y · homepage
+public fun pub_links_in(doc: JsonValue, name: string) -> string {
+    set found = false
+    set pub = pub_in(doc, name, ref found)
+    set parts: string[] = []
+    if found {
+        set gh = pub.get("github").as_string_or("")
+        set gl = pub.get("gitlab").as_string_or("")
+        set hp = pub.get("homepage").as_string_or("")
+        if gh.len() > 0 {
+            parts.push("github.com/" + gh)
+        }
+        if gl.len() > 0 {
+            parts.push("gitlab.com/" + gl)
+        }
+        if hp.len() > 0 {
+            parts.push(hp)
+        }
+    }
+    return sjoin(parts, " · ")
+}
+
+// Отпечаток без пробелов: «3fa9 c07d» и «3fa9c07d» — одно и то же.
+fun norm_fp(s: string) -> string {
+    return sjoin(str_split(s, " "), "")
+}
+
+// Подпись релиза входит в ключи издателя?
+public fun pub_has_key(pub: JsonValue, signer: string) -> bool {
+    set ks = pub.get("keys")
+    set want = norm_fp(signer)
+    for i in 0..ks.len() {
+        if eq(norm_fp(ks.at(i).as_string_or("")), want) {
+            return true
+        }
+    }
+    return false
+}
+
+// ── команды ─────────────────────────────────────────────────────────────
+
+public fun cmd_publisher_list() {
+    set doc = pub_doc()
+    set ps = doc.get("publishers")
+    if ps.len() == 0 {
+        info("no publisher profiles in the catalog yet: maintainers add publishers.json to the index repo")
+        return
+    }
+    set pk = doc.get("packages")
+    for i in 0..ps.len() {
+        set nm = ps.at(i).get("name").as_string_or("")
+        set n: int64 = 0
+        for k in 0..pk.len() {
+            if eq(pk.at(k).get("publisher").as_string_or(""), nm) {
+                rewrite n += 1
+            }
+        }
+        println("  " + c_good(sym("ok")) + " " + c_accent(str_pad_end(nm, 16)) + c_dim(pub_links_in(doc, nm)) + " " + c_dim(cast(n, "string") + " " + plural(n, "package", "packages")))
+    }
+    info("details: `yuki publisher show <name>`")
+}
+
+public fun cmd_publisher_show(name: string) {
+    set doc = pub_doc()
+    set found = false
+    set pub = pub_in(doc, name, ref found)
+    if !found {
+        panic(err("no such publisher in the catalog: \"" + name + "\"", 770, name))
+    }
+    set disp = pub.get("display").as_string_or("")
+    if disp.len() == 0 {
+        rewrite disp = name
+    }
+    set rows: string[] = []
+    rows.push(c_good(sym("ok") + " " + disp) + c_dim("  publisher profile"))
+    set links = pub_links_in(doc, name)
+    if links.len() > 0 {
+        rows.push("  " + c_dim("links") + "  " + links)
+    }
+    set sm = pub.get("summary").as_string_or("")
+    if sm.len() > 0 {
+        rows.push("  " + c_dim("about") + "  " + sm)
+    }
+    set kn = pub.get("keys").len()
+    rows.push("  " + c_dim("keys") + "  " + cast(kn, "string") + " " + plural(kn, "key", "keys") + c_dim(" — a release counts as verified only when its signature is one of these"))
+    set own: string[] = []
+    set pk = doc.get("packages")
+    for i in 0..pk.len() {
+        if eq(pk.at(i).get("publisher").as_string_or(""), name) {
+            own.push(pk.at(i).get("name").as_string_or(""))
+        }
+    }
+    if own.len() > 0 {
+        rows.push("  " + c_dim("packages") + "  " + sjoin(own, ", "))
+    } else {
+        rows.push("  " + c_dim("packages") + "  none yet")
+    }
+    card(ref rows)
+    info("the ✓ mark appears where a release is checked against these keys: install, catalog, search")
+}

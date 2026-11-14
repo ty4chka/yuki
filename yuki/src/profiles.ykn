@@ -1,0 +1,415 @@
+// profiles.ykn — профили и живой каталог: именованные наборы пакетов,
+// просмотр каталога и его теги. Свои профили лежат в <state>/profiles/*.json,
+// каталог может предлагать и «кураторские» ( profiles.json в репозитории индекса ).
+//
+//   yuki profile list | show <name> | add <name> <pkg>... | remove <name> [pkg]... | install <name>
+//   yuki catalog [query]     yuki tags [prefix]     yuki search tag:<name>
+
+load core.utils: cast
+load core.panic: panic
+load std.io: println
+load std.json: JsonValue, json_parse, json_object, json_array, json_string, json_int, json_pretty, json_validate
+load std.fs.files: file_exists, file_read_text, file_write_text, file_rename, file_remove
+load std.fs.dirs: dir_create_all, dir_exists, dir_list
+load std.fs.paths: path_file_name
+load std.strings: eq, trim, contains, slice
+load .errors: YukiError, err
+load .config: state_dir
+load .priv: is_root
+load .util: valid_name, now_secs, str_ends, str_starts, join2, str_lower, sjoin, str_pad_end, plural
+load .ui: ok, info, warn, bad, card, kv, c_accent, c_good, c_warn, c_bad, c_dim
+load .theme: sym
+load .sysdb: db_has
+load .tools: verified_catalog
+load .publisher: pub_display_in, pub_links_in
+load .sysinstall: cmd_sys_install_many
+
+fun need_root_for_profiles() {
+    if !is_root() {
+        panic(err("profiles live in " + state_dir() + " (system-wide): run this with sudo", 750, "profiles"))
+    }
+}
+
+fun prof_dir() -> string {
+    return join2(state_dir(), "profiles")
+}
+
+fun prof_path(name: string) -> string {
+    return join2(prof_dir(), name + ".json")
+}
+
+fun local_profile_names() -> string[] {
+    set out: string[] = []
+    if !dir_exists(prof_dir()) {
+        return out
+    }
+    set ls = dir_list(prof_dir())
+    for i in 0..ls.len() {
+        set nm = path_file_name(ls[i])
+        if str_ends(nm, ".json") {
+            out.push(slice(nm, 0, nm.len() - 5))
+        }
+    }
+    return out
+}
+
+fun load_profile(name: string) -> JsonValue {
+    if !valid_name(name) {
+        panic(err("invalid profile name \"" + name + "\": a-z, 0-9, _ and -", 201, name))
+    }
+    set p = prof_path(name)
+    if !file_exists(p) {
+        panic(err("no such profile \"" + name + "\": see `yuki profile list`", 764, p))
+    }
+    set text = file_read_text(p)
+    if !json_validate(text) {
+        panic(err("profile file is not valid JSON: " + name, 765, p))
+    }
+    return json_parse(text)
+}
+
+// Запись через временный файл и rename: профиль не остаётся наполовину записанным.
+fun save_profile(name: string, pkgs: string[]) {
+    dir_create_all(prof_dir())
+    set arr = json_array([])
+    for i in 0..pkgs.len() {
+        arr.push(json_string(pkgs[i]))
+    }
+    set root = json_object()
+    root.set("name", json_string(name))
+    root.set("created", json_int(now_secs()))
+    root.set("packages", arr)
+    set p = prof_path(name)
+    set tmp = p + ".tmp"
+    file_write_text(tmp, json_pretty(root) + "\n")
+    file_rename(tmp, p)
+}
+
+// Имена пакетов из записи профиля.
+fun profile_pkgs(doc: JsonValue) -> string[] {
+    set out: string[] = []
+    set pk = doc.get("packages")
+    for i in 0..pk.len() {
+        set p = pk.at(i).as_string_or("")
+        if p.len() > 0 {
+            out.push(p)
+        }
+    }
+    return out
+}
+
+// "tags: a, b" для записи каталога; "" если тегов нет.
+fun tag_line(tags: JsonValue) -> string {
+    set parts: string[] = []
+    for i in 0..tags.len() {
+        set t = tags.at(i).as_string_or("")
+        if t.len() > 0 {
+            parts.push(t)
+        }
+    }
+    if parts.len() == 0 {
+        return ""
+    }
+    return "tags: " + sjoin(parts, ", ")
+}
+
+// Профили из подписанного каталога; пустой массив, если каталог недоступен.
+fun catalog_profiles() -> JsonValue {
+    set out = json_array([])
+    sus {
+        set doc = json_parse(verified_catalog())
+        rewrite out = doc.get("profiles")
+    } catch {
+        // каталог недоступен — значит, кураторских профилей не показываем
+    }
+    return out
+}
+
+// Найти профиль: сначала свой, потом кураторский из каталога.
+fun find_profile(name: string, ref source: string) -> string[] {
+    if valid_name(name) && file_exists(prof_path(name)) {
+        rewrite source = "local"
+        return profile_pkgs(load_profile(name))
+    }
+    set rem = catalog_profiles()
+    for i in 0..rem.len() {
+        if eq(rem.at(i).get("name").as_string_or(""), name) {
+            rewrite source = "catalog"
+            return profile_pkgs(rem.at(i))
+        }
+    }
+    panic(err("no such profile \"" + name + "\": see `yuki profile list`", 764, ""))
+}
+
+// ── profile add / remove ────────────────────────────────────────────────
+
+public fun cmd_profile_add(name: string, ref pkgs: string[]) {
+    need_root_for_profiles()
+    if !valid_name(name) {
+        panic(err("invalid profile name \"" + name + "\": a-z, 0-9, _ and -", 201, name))
+    }
+    if pkgs.len() == 0 {
+        panic(err("profile needs at least one package", 766, name))
+    }
+    for i in 0..pkgs.len() {
+        if !valid_name(pkgs[i]) {
+            panic(err("invalid package name \"" + pkgs[i] + "\"", 201, pkgs[i]))
+        }
+    }
+    set all: string[] = []
+    set have = false
+    if file_exists(prof_path(name)) {
+        rewrite have = true
+        set old = profile_pkgs(load_profile(name))
+        for i in 0..old.len() {
+            all.push(old[i])
+        }
+    }
+    set added: string[] = []
+    for i in 0..pkgs.len() {
+        set dup = false
+        for k in 0..all.len() {
+            if eq(all[k], pkgs[i]) {
+                rewrite dup = true
+            }
+        }
+        if !dup {
+            all.push(pkgs[i])
+            added.push(pkgs[i])
+        }
+    }
+    // мягкая сверка с каталогом: предупреждаем, но не блокируем
+    sus {
+        set cat = json_parse(verified_catalog())
+        set cp = cat.get("packages")
+        for i in 0..added.len() {
+            set found = false
+            for k in 0..cp.len() {
+                if eq(cp.at(k).get("name").as_string_or(""), added[i]) {
+                    rewrite found = true
+                }
+            }
+            if !found {
+                warn(added[i] + ": not in the catalog yet (install will still try)")
+            }
+        }
+    } catch {
+        // каталог недоступен — добавляем без сверки
+    }
+    save_profile(name, all)
+    if have {
+        ok("profile " + c_accent(name) + " updated: " + c_dim(cast(all.len(), "string") + " " + plural(all.len(), "package", "packages")))
+    } else {
+        ok("profile " + c_accent(name) + " created: " + c_dim(cast(all.len(), "string") + " " + plural(all.len(), "package", "packages")))
+    }
+    println("      " + c_dim(sjoin(all, ", ")))
+    info("install everything with `sudo yuki profile install " + name + "`")
+}
+
+public fun cmd_profile_remove(name: string, ref pkgs: string[]) {
+    need_root_for_profiles()
+    set doc = load_profile(name)
+    if pkgs.len() == 0 {
+        file_remove(prof_path(name))
+        ok("profile " + c_accent(name) + " removed")
+        return
+    }
+    set old = profile_pkgs(doc)
+    set all: string[] = []
+    for i in 0..old.len() {
+        set drop = false
+        for k in 0..pkgs.len() {
+            if eq(old[i], pkgs[k]) {
+                rewrite drop = true
+            }
+        }
+        if !drop {
+            all.push(old[i])
+        }
+    }
+    if all.len() == 0 {
+        file_remove(prof_path(name))
+        ok("profile " + c_accent(name) + " removed (no packages left)")
+        return
+    }
+    save_profile(name, all)
+    ok("profile " + c_accent(name) + " updated: " + c_dim(cast(all.len(), "string") + " " + plural(all.len(), "package", "packages")))
+}
+
+// ── profile list / show / install ───────────────────────────────────────
+
+public fun cmd_profile_list() {
+    set loc = local_profile_names()
+    for i in 0..loc.len() {
+        set doc = load_profile(loc[i])
+        set pk = profile_pkgs(doc)
+        println("  " + c_accent(str_pad_end(loc[i], 16)) + " " + c_dim("local") + "   " + c_dim(cast(pk.len(), "string") + ": " + sjoin(pk, ", ")))
+    }
+    set rem = catalog_profiles()
+    for i in 0..rem.len() {
+        set nm = rem.at(i).get("name").as_string_or("")
+        set sm = rem.at(i).get("summary").as_string_or("")
+        set pk = rem.at(i).get("packages")
+        println("  " + c_accent(str_pad_end(nm, 16)) + " " + c_dim("catalog") + " " + c_dim(cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages")))
+        if sm.len() > 0 {
+            println("      " + c_dim(sm))
+        }
+    }
+    if loc.len() == 0 && rem.len() == 0 {
+        info("no profiles yet: `sudo yuki profile add <name> <pkg>...`")
+        return
+    }
+    info("install with `sudo yuki profile install <name>`")
+}
+
+public fun cmd_profile_show(name: string) {
+    set source = ""
+    set pk = find_profile(name, ref source)
+    set rows: string[] = []
+    rows.push(c_accent(name) + "  " + c_dim(source + " profile, " + cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages")))
+    for i in 0..pk.len() {
+        set mark = ""
+        if db_has(pk[i]) {
+            rewrite mark = " " + c_good("[installed]")
+        }
+        rows.push("  " + sym("dot") + " " + pk[i] + mark)
+    }
+    card(ref rows)
+    info("install with `sudo yuki profile install " + name + "`")
+}
+
+public fun cmd_profile_install(name: string) {
+    set source = ""
+    set pk = find_profile(name, ref source)
+    if pk.len() == 0 {
+        panic(err("profile \"" + name + "\" has no packages", 766, name))
+    }
+    println("  " + c_accent(name) + " " + c_dim(source + " profile, " + cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages") + ": " + sjoin(pk, ", ")))
+    cmd_sys_install_many(ref pk)
+}
+
+// ── каталог и теги ──────────────────────────────────────────────────────
+
+// Удобный просмотр подписанного каталога: имя, версия, резюме, теги,
+// лицензия и где смотреть код. Запрос фильтрует по имени, резюме и тегам.
+public fun cmd_catalog(query: string) {
+    set doc = json_parse(verified_catalog())
+    set pk = doc.get("packages")
+    set q = str_lower(query)
+    set shown: int64 = 0
+    for i in 0..pk.len() {
+        set nm = pk.at(i).get("name").as_string_or("")
+        set sm = pk.at(i).get("summary").as_string_or("")
+        set pass = q.len() == 0
+        if !pass {
+            rewrite pass = contains(str_lower(nm), q) || contains(str_lower(sm), q)
+        }
+        if !pass {
+            set tg = pk.at(i).get("tags")
+            for k in 0..tg.len() {
+                if contains(str_lower(tg.at(k).as_string_or("")), q) {
+                    rewrite pass = true
+                }
+            }
+        }
+        if pass {
+            set mark = ""
+            if db_has(nm) {
+                rewrite mark = " " + c_good("[installed]")
+            }
+            println("  " + c_accent(nm) + " " + c_good(pk.at(i).get("version").as_string_or("")) + " " + c_dim(pk.at(i).get("kind").as_string_or("")) + mark)
+            if sm.len() > 0 {
+                println("      " + c_dim(sm))
+            }
+            set extra: string[] = []
+            set tl = tag_line(pk.at(i).get("tags"))
+            if tl.len() > 0 {
+                extra.push(tl)
+            }
+            set lic = pk.at(i).get("license").as_string_or("")
+            if lic.len() > 0 {
+                extra.push(lic)
+            }
+            set rep = pk.at(i).get("repository").as_string_or("")
+            if rep.len() == 0 {
+                rewrite rep = pk.at(i).get("homepage").as_string_or("")
+            }
+            if rep.len() > 0 {
+                extra.push(rep)
+            }
+            if extra.len() > 0 {
+                println("      " + c_dim(sjoin(extra, "  " + sym("dot") + "  ")))
+            }
+            set pn = pk.at(i).get("publisher").as_string_or("")
+            if pn.len() > 0 {
+                println("      " + c_good(sym("ok") + " " + pub_display_in(doc, pn)) + c_dim("  " + pub_links_in(doc, pn)))
+            }
+            rewrite shown += 1
+        }
+    }
+    if shown == 0 {
+        warn("nothing matches \"" + query + "\"")
+        return
+    }
+    if q.len() == 0 {
+        println("")
+        info(cast(shown, "string") + " " + plural(shown, "package", "packages") + "  " + sym("dot") + "  topics: `yuki tags`  " + sym("dot") + "  bundles: `yuki profile list`")
+    }
+}
+
+// Темы каталога в духе тегов GitHub: самые используемые сверху.
+public fun cmd_tags(prefix: string) {
+    set doc = json_parse(verified_catalog())
+    set pk = doc.get("packages")
+    set names: string[] = []
+    set counts: int64[] = []
+    for i in 0..pk.len() {
+        set tg = pk.at(i).get("tags")
+        for k in 0..tg.len() {
+            set t = str_lower(tg.at(k).as_string_or(""))
+            if t.len() == 0 {
+                continue
+            }
+            set hit: int64 = -1
+            for m in 0..names.len() {
+                if eq(names[m], t) {
+                    rewrite hit = m
+                }
+            }
+            if hit >= 0 {
+                rewrite counts[hit] = counts[hit] + 1
+            } else {
+                names.push(t)
+                counts.push(1)
+            }
+        }
+    }
+    // сортировка выбором по числу пакетов
+    for i in 0..names.len() {
+        set best = i
+        for k in (i + 1)..names.len() {
+            if counts[k] > counts[best] {
+                rewrite best = k
+            }
+        }
+        if best != i {
+            set tn = names[i]
+            rewrite names[i] = names[best]
+            rewrite names[best] = tn
+            set tc = counts[i]
+            rewrite counts[i] = counts[best]
+            rewrite counts[best] = tc
+        }
+    }
+    set shown: int64 = 0
+    for i in 0..names.len() {
+        if prefix.len() > 0 && !str_starts(names[i], str_lower(prefix)) {
+            continue
+        }
+        println("  " + c_accent(str_pad_end(names[i], 18)) + c_dim(cast(counts[i], "string") + " " + plural(counts[i], "package", "packages") + "  " + sym("dot") + "  yuki search tag:" + names[i]))
+        rewrite shown += 1
+    }
+    if shown == 0 {
+        warn("no tags in the catalog yet: maintainers add \"tags\" to release json and rebuild with `yuki index catalog <key>`")
+    }
+}

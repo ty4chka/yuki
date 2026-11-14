@@ -1,0 +1,254 @@
+// scan.ykn — первичный умный осмотр содержимого пакета на вредоносные паттерны.
+//
+// Идея: перед тем как root запишет файлы в систему, пройтись по распакованному
+// дереву и поискать то, что «плохо выглядит»: обратные шеллы, майнеры,
+// закрепление в системе, скрытые payload'ы, setuid, затирание логов.
+// Это НЕ антивирус: сигнатур нет, только эвристики с уровнями опасности.
+//
+//   yuki scan <dir>            осмотреть любую распакованную папку
+//   (install показывает сводку сам, до записи в систему)
+//
+// Итог — сводка «что плохо выглядит» с советом пересмотреть решение;
+// high-находки отдельным вопросом блокируют установку (YUKI_ALLOW_RISKY=1 — осознанный обход).
+
+load core.panic: panic
+load core.utils: cast
+load std.io: println
+load std.fs.files: file_read_text, file_metadata
+load std.fs.dirs: dir_list, dir_exists
+load std.fs.paths: path_file_name
+load std.strings: eq, contains
+load .errors: YukiError, err
+load .ui: ok, info, warn, bad, card, c_accent, c_good, c_bad, c_dim, c_warn, c_bold
+load .theme: sym
+load .util: str_starts, join2, str_lower, str_pad_end
+
+public struct ScanHit {
+    sev: string      // "high" | "med" | "low"
+    file: string     // путь внутри пакета
+    why: string      // что именно выглядит плохо
+}
+
+static MAX_HITS: int64 = 40
+static MAX_FILES: int64 = 1500
+static MAX_BYTES: int64 = 262144   // текстовые файлы крупнее 256 KiB не читаем
+
+fun add_hit(ref hits: ScanHit[], ref n: int64, sev: string, file: string, why: string) {
+    if n >= MAX_HITS {
+        return
+    }
+    hits.push(ScanHit { sev: sev, file: file, why: why })
+    rewrite n += 1
+}
+
+// Одна эвристика = один if. Паттерны ищутся в нижнем регистре содержимого файла.
+fun look(t: string, file: string, ref hits: ScanHit[], ref n: int64) {
+    // скачать и сразу выполнить
+    set dl = contains(t, "curl") || contains(t, "wget")
+    set piped = contains(t, "| sh") || contains(t, "|sh ") || contains(t, "| bash") || contains(t, "|bash")
+    if dl && piped {
+        add_hit(ref hits, ref n, "high", file, "pipes a downloaded script straight into a shell")
+    }
+    // обратные шеллы
+    if contains(t, "/dev/tcp/") {
+        add_hit(ref hits, ref n, "high", file, "opens a raw reverse shell over /dev/tcp")
+    }
+    if contains(t, "bash -i >&") {
+        add_hit(ref hits, ref n, "high", file, "relays an interactive bash over the network")
+    }
+    if contains(t, "nc -e ") || contains(t, "ncat -e ") {
+        add_hit(ref hits, ref n, "high", file, "hands a shell to the network with netcat -e")
+    }
+    // закрепление и доступ
+    if contains(t, "authorized_keys") {
+        add_hit(ref hits, ref n, "high", file, "touches ssh authorized_keys (backdoor access)")
+    }
+    if contains(t, "ld.so.preload") {
+        add_hit(ref hits, ref n, "high", file, "installs an ld.so.preload hook (rootkit trick)")
+    }
+    if contains(t, "systemctl enable") {
+        add_hit(ref hits, ref n, "med", file, "installs a systemd service (persistence)")
+    }
+    if contains(t, "/etc/cron") || contains(t, "crontab ") {
+        add_hit(ref hits, ref n, "med", file, "installs a cron job (persistence)")
+    }
+    // разрушение и секреты
+    if contains(t, "rm -rf /") {
+        add_hit(ref hits, ref n, "high", file, "destructive `rm -rf /`")
+    }
+    if contains(t, "/etc/shadow") {
+        add_hit(ref hits, ref n, "high", file, "reads /etc/shadow password hashes")
+    }
+    // майнеры
+    set mine = contains(t, "stratum+tcp") || contains(t, "stratum+ssl") || contains(t, "cryptonight") || contains(t, "xmrig") || contains(t, "minerd")
+    if mine {
+        add_hit(ref hits, ref n, "high", file, "cryptocurrency miner strings")
+    }
+    // скрытые payload'ы
+    set b64 = contains(t, "base64 -d") || contains(t, "base64 --decode") || contains(t, "openssl enc -d")
+    if b64 {
+        add_hit(ref hits, ref n, "med", file, "decodes a hidden payload (base64/openssl)")
+    }
+    if contains(t, "eval") && contains(t, "base64") {
+        add_hit(ref hits, ref n, "high", file, "eval of base64-decoded text (obfuscated code)")
+    }
+    // права и модули
+    if contains(t, "chmod u+s") || contains(t, "chmod +s") || contains(t, "chmod 4755") || contains(t, "chmod 6755") {
+        add_hit(ref hits, ref n, "med", file, "sets setuid bits")
+    }
+    if contains(t, "insmod ") || contains(t, "modprobe ") {
+        add_hit(ref hits, ref n, "med", file, "loads kernel modules")
+    }
+    // заметание следов
+    if contains(t, "history -c") || contains(t, "shred -") || contains(t, "wevtutil") {
+        add_hit(ref hits, ref n, "med", file, "clears logs / covers tracks")
+    }
+    if contains(t, "pastebin.com") {
+        add_hit(ref hits, ref n, "med", file, "pulls content from a paste service")
+    }
+    // мелочи
+    if contains(t, "telemetry") || contains(t, "phone home") {
+        add_hit(ref hits, ref n, "low", file, "mentions telemetry / phoning home")
+    }
+    if contains(t, "icanhazip") || contains(t, "ifconfig.me") || contains(t, "checkip.amazonaws") {
+        add_hit(ref hits, ref n, "low", file, "checks your public ip")
+    }
+}
+
+// Рекурсивный обход дерева пакета с бюджетом: не глубже 8, не больше MAX_FILES,
+// docs/man пропускаем, крупные и бинарные файлы не читаем.
+fun scan_tree(base: string, sub: string, depth: int64, ref hits: ScanHit[], ref n: int64, ref files: int64) {
+    if depth > 8 || files >= MAX_FILES {
+        return
+    }
+    set dir = base
+    if sub.len() > 0 {
+        rewrite dir = join2(base, sub)
+    }
+    set ls: string[] = []
+    set okd = false
+    sus {
+        rewrite ls = dir_list(dir)
+        rewrite okd = true
+    } catch {
+    }
+    if !okd {
+        return
+    }
+    for i in 0..ls.len() {
+        if n >= MAX_HITS || files >= MAX_FILES {
+            return
+        }
+        set name = path_file_name(ls[i])
+        if eq(name, ".") || eq(name, "..") || eq(name, ".git") {
+            continue
+        }
+        set rel = name
+        if sub.len() > 0 {
+            rewrite rel = sub + "/" + name
+        }
+        if str_starts(rel, "share/doc") || str_starts(rel, "share/man") || str_starts(rel, "share/licenses") {
+            continue
+        }
+        set full = join2(base, rel)
+        set md = file_metadata(full)
+        if md.is_symlink {
+            continue
+        }
+        set isdir = false
+        set probe: string[] = []
+        sus {
+            rewrite probe = dir_list(full)
+            rewrite isdir = true
+        } catch {
+        }
+        if isdir {
+            scan_tree(base, rel, depth + 1, ref hits, ref n, ref files)
+            continue
+        }
+        rewrite files += 1
+        if md.size > MAX_BYTES {
+            continue
+        }
+        set text = ""
+        set okf = false
+        sus {
+            rewrite text = file_read_text(full)
+            rewrite okf = true
+        } catch {
+        }
+        if !okf || text.len() == 0 {
+            continue
+        }
+        look(str_lower(text), rel, ref hits, ref n)
+    }
+}
+
+// Осмотреть распакованное дерево; вернёт находки (может быть пусто).
+public fun scan_dir(root: string) -> ScanHit[] {
+    set hits: ScanHit[] = []
+    set n: int64 = 0
+    set files: int64 = 0
+    scan_tree(root, "", 0, ref hits, ref n, ref files)
+    return hits
+}
+
+// Сводка «что плохо выглядит»: карточка с находками + совет пересмотреть решение.
+// Возвращает худший уровень: 0 чисто, 1 мелочи, 2 средне, 3 высокий.
+public fun print_report(pkg: string, ref hits: ScanHit[]) -> int64 {
+    set rows: string[] = []
+    set nhigh: int64 = 0
+    set nmed: int64 = 0
+    set nlow: int64 = 0
+    for i in 0..hits.len() {
+        set tag = c_dim(str_pad_end("low", 5))
+        if eq(hits[i].sev, "high") {
+            rewrite tag = c_bad(str_pad_end("HIGH", 5))
+            rewrite nhigh += 1
+        } elif eq(hits[i].sev, "med") {
+            rewrite tag = c_warn(str_pad_end("med", 5))
+            rewrite nmed += 1
+        } else {
+            rewrite nlow += 1
+        }
+        rows.push(tag + " " + c_accent(hits[i].file) + "  " + c_dim(hits[i].why))
+    }
+    println("")
+    println("  " + c_accent("::") + " " + c_bold(pkg) + " " + c_dim("content scan"))
+    card(ref rows)
+    println("  " + c_dim("findings: " + cast(nhigh, "string") + " high " + sym("dot") + " " + cast(nmed, "string") + " med " + sym("dot") + " " + cast(nlow, "string") + " low"))
+    set worst: int64 = 0
+    for i in 0..hits.len() {
+        if eq(hits[i].sev, "high") {
+            rewrite worst = 3
+        } elif eq(hits[i].sev, "med") && worst < 2 {
+            rewrite worst = 2
+        } elif eq(hits[i].sev, "low") && worst == 0 {
+            rewrite worst = 1
+        }
+    }
+    if worst == 3 {
+        println("  " + c_bad(sym("fail") + " HIGH-risk patterns in " + pkg + " — re-check the upstream (homepage, sources) before trusting it"))
+    } elif worst == 2 {
+        warn("some patterns in " + pkg + " deserve a second look (see above) — better re-check the solution")
+    } else {
+        info("only minor notes in " + pkg)
+    }
+    return worst
+}
+
+// yuki scan <dir>: осмотреть любую распакованную папку руками.
+public fun cmd_scan(path: string) {
+    if !dir_exists(path) {
+        panic(err("not a directory: " + path, 759, path))
+    }
+    set hits = scan_dir(path)
+    if hits.len() == 0 {
+        ok("nothing suspicious found in " + c_accent(path))
+        return
+    }
+    set s = print_report(path, ref hits)
+    if s >= 3 {
+        panic(err("high-risk patterns found: review the report above", 759, path))
+    }
+}

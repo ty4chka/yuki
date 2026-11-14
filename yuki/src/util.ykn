@@ -207,3 +207,11 @@ public fun sjoin(items: string[], delim: string = "") -> string {
     set r: string = str_join(items, delim)
     return r + ""
 }
+
+// 1 → «package», иначе «packages» — единое множественное число для всех сводок.
+public fun plural(n: int64, one: string, many: string) -> string {
+    if n == 1 {
+        return one
+    }
+    return many
+}

@@ -180,7 +180,7 @@ public fun trust_add(name: string, pubkey_hex: string, role: string, assume_yes:
     println("  key          " + key)
     println("  role         " + role)
     if !assume_yes {
-        print("  trust this key for signing index entries? [y/N] ")
+        println("  trust this key for signing index entries? [y/N]")
         set answer = str_lower(trim(read_line()))
         if !eq(answer, "y") && !eq(answer, "yes") {
             panic(err("aborted: key was not trusted", 603, name))

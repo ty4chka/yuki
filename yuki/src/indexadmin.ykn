@@ -4,6 +4,7 @@
 //   yuki index check [download]           проверка всего индекса: подписи, поля, зависимости, сроки
 //   yuki index catalog <key>              пересобрать подписанный catalog.json для `yuki search`
 //   yuki index renew-all <key> [days]     продлить записи, которые скоро истекают
+//   profiles.json (необязательный)        кураторские профили для catalog.json
 //
 // release.json (массивы вместо словарей, чтобы формат не зависел от имён платформ):
 // {
@@ -32,7 +33,7 @@ load .trust: sign_text, pubkey_of
 load .pipeline: fetch_unpinned
 load .fetch: check_url
 load .verify: VerifyError, checksum_ok_format
-load .util: valid_name, valid_version, valid_dep_spec, dep_name, ver_cmp, now_secs, str_ends
+load .util: valid_name, valid_version, valid_dep_spec, dep_name, ver_cmp, now_secs, str_ends, str_starts, sjoin, str_split, plural
 
 static ENTRY_LIFETIME: int64 = 7776000
 static RENEW_WARN: int64 = 2592000
@@ -46,12 +47,15 @@ fun need_checkout() {
 // Записать entry и подпись. Пустые kind/summary/homepage/license берутся из существующего файла.
 // renew == true: содержимое не менялось, старые подписи содержимого (content_sigs) сохраняются,
 // поэтому ключ-«продлеватель» может обновить срок, но не может изменить релизы.
-public fun write_entry(name: string, seq: int64, versions: JsonValue, keyname: string, kind: string, summary: string, homepage: string, license: string, renew: bool) {
+public fun write_entry(name: string, seq: int64, versions: JsonValue, keyname: string, kind: string, summary: string, homepage: string, license: string, repository: string, tags: JsonValue, publisher: string, renew: bool) {
     set rel = entry_rel(name)
     set k = kind
     set sm = summary
     set hp = homepage
     set lc = license
+    set rp = repository
+    set tg = tags
+    set pb = publisher
     if file_exists(rel) {
         set old = json_parse(file_read_text(rel))
         if k.len() == 0 {
@@ -65,6 +69,15 @@ public fun write_entry(name: string, seq: int64, versions: JsonValue, keyname: s
         }
         if lc.len() == 0 {
             rewrite lc = old.get("license").as_string_or("")
+        }
+        if rp.len() == 0 {
+            rewrite rp = old.get("repository").as_string_or("")
+        }
+        if tg.len() == 0 {
+            rewrite tg = old.get("tags")
+        }
+        if pb.len() == 0 {
+            rewrite pb = old.get("publisher").as_string_or("")
         }
     }
     if k.len() == 0 {
@@ -98,6 +111,15 @@ public fun write_entry(name: string, seq: int64, versions: JsonValue, keyname: s
     }
     if lc.len() > 0 {
         root.set("license", json_string(lc))
+    }
+    if rp.len() > 0 {
+        root.set("repository", json_string(rp))
+    }
+    if tg.len() > 0 {
+        root.set("tags", tg.cp())
+    }
+    if pb.len() > 0 {
+        root.set("publisher", json_string(pb))
     }
     root.set("seq", json_int(seq))
     root.set("expires", json_int(now_secs() + ENTRY_LIFETIME))
@@ -146,6 +168,20 @@ public fun cmd_index_add(file: string, keyname: string) {
     }
     if !eq(kind, "lib") && !eq(kind, "app") {
         panic(err("kind must be lib or app", 218, file))
+    }
+    // обязательное поле одно — summary; остальные необязательные, но полезные
+    if rj.get("summary").as_string_or("").len() == 0 {
+        panic(err("required field \"summary\" is missing (one line: what the package does)", 219, file))
+    }
+    set tj = rj.get("tags")
+    for i in 0..tj.len() {
+        if tj.at(i).as_string_or("").len() == 0 {
+            panic(err("tags must be an array of non-empty strings", 219, file))
+        }
+    }
+    set repo = rj.get("repository").as_string_or("")
+    if repo.len() > 0 && !check_url(repo) {
+        panic(err("repository must be a working https url", 219, file))
     }
 
     step(1, 3, "checking artifacts for " + c_accent(name + " " + version))
@@ -220,7 +256,7 @@ public fun cmd_index_add(file: string, keyname: string) {
     versions.push(item)
 
     step(3, 3, "signing with " + c_accent(keyname))
-    write_entry(name, seq, versions, keyname, kind, rj.get("summary").as_string_or(""), rj.get("homepage").as_string_or(""), rj.get("license").as_string_or(""), false)
+    write_entry(name, seq, versions, keyname, kind, rj.get("summary").as_string_or(""), rj.get("homepage").as_string_or(""), rj.get("license").as_string_or(""), repo, rj.get("tags"), rj.get("publisher").as_string_or(""), false)
     info("next: git add index && git commit -S -m \"" + name + " " + version + "\" && open a pull request")
 }
 
@@ -235,6 +271,22 @@ public fun cmd_index_check(download: bool) {
     set all = dir_walk("index")
     set problems: int64 = 0
     set checked: int64 = 0
+    set perr = profile_errors()
+    for i in 0..perr.len() {
+        bad(perr[i])
+        rewrite problems += 1
+    }
+    if !file_exists("profiles.json") {
+        warn("no profiles.json: optional, but curated profiles make the catalog friendlier (clients: `yuki profile install <name>`)")
+    }
+    set pberr = publishers_errors()
+    for i in 0..pberr.len() {
+        bad(pberr[i])
+        rewrite problems += 1
+    }
+    if !file_exists("publishers.json") {
+        warn("no publishers.json: optional, but publisher profiles give packages a verifiable face (clients: `yuki publisher list`)")
+    }
     for i in 0..all.len() {
         set p = all[i]
         if !str_ends(p, ".json") {
@@ -259,6 +311,13 @@ public fun cmd_index_check(download: bool) {
             continue
         }
         set doc = json_parse(text)
+        if doc.get("summary").as_string_or("").len() == 0 {
+            bad(p + ": required field \"summary\" is missing")
+            rewrite problems += 1
+        }
+        if doc.get("homepage").as_string_or("").len() == 0 && doc.get("repository").as_string_or("").len() == 0 {
+            warn(p + ": no homepage/repository: add one so users can review the source")
+        }
         if doc.get("expires").as_int() - now_secs() < RENEW_WARN {
             bad(p + ": expires in less than 30 days: run `yuki renew " + name + " <key>`")
             rewrite problems += 1
@@ -314,7 +373,160 @@ public fun cmd_index_check(download: bool) {
     ok("index is healthy " + c_dim(cast(checked, "string") + " release(s) verified"))
 }
 
+// ── profiles.json: кураторские профили каталога ─────────────────────────
+
+// Текущее содержимое profiles.json (пустой массив, если файла нет).
+fun read_profiles_doc() -> JsonValue {
+    if !file_exists("profiles.json") {
+        return json_array([])
+    }
+    return json_parse(file_read_text("profiles.json"))
+}
+
+// Массив проблем в profiles.json ([] — всё в порядке). Файл необязательный:
+// каждый профиль — { "name", "summary", "packages": [...] }, пакеты должны
+// существовать в индексе, чтобы профиль нельзя было собрать из пустышек.
+fun profile_errors() -> string[] {
+    set out: string[] = []
+    if !file_exists("profiles.json") {
+        return out
+    }
+    if !json_validate(file_read_text("profiles.json")) {
+        out.push("profiles.json is not valid JSON")
+        return out
+    }
+    set doc = json_parse(file_read_text("profiles.json"))
+    set seen: string[] = []
+    for i in 0..doc.len() {
+        set pr = doc.at(i)
+        set nm = pr.get("name").as_string_or("")
+        if !valid_name(nm) {
+            out.push("profiles.json: profile #" + cast(i + 1, "string") + " has a bad name \"" + nm + "\"")
+            continue
+        }
+        for k in 0..seen.len() {
+            if eq(seen[k], nm) {
+                out.push("profiles.json: duplicate profile \"" + nm + "\"")
+            }
+        }
+        seen.push(nm)
+        if pr.get("summary").as_string_or("").len() == 0 {
+            out.push("profiles.json: profile \"" + nm + "\" is missing a summary")
+        }
+        set pk = pr.get("packages")
+        if pk.len() == 0 {
+            out.push("profiles.json: profile \"" + nm + "\" has no packages")
+        }
+        for k in 0..pk.len() {
+            set p = pk.at(k).as_string_or("")
+            if !valid_name(p) {
+                out.push("profiles.json: profile \"" + nm + "\" has a bad package \"" + p + "\"")
+            } elif !file_exists(entry_rel(p)) {
+                out.push("profiles.json: profile \"" + nm + "\" references \"" + p + "\" which is not in the index")
+            }
+        }
+    }
+    return out
+}
+
 // ── catalog ─────────────────────────────────────────────────────────────
+
+// ── publishers.json: издатели каталога (платформы + ключи) ──────────────
+
+// Текущее содержимое publishers.json (пустой массив, если файла нет).
+fun read_publishers_doc() -> JsonValue {
+    if !file_exists("publishers.json") {
+        return json_array([])
+    }
+    return json_parse(file_read_text("publishers.json"))
+}
+
+// Отпечаток выглядит как ключ: hex и пробелы, не короче 8 знаков без пробелов.
+fun fp_ok(fp: string) -> bool {
+    set bare = sjoin(str_split(fp, " "), "")
+    if bare.len() < 8 {
+        return false
+    }
+    for i in 0..bare.len() {
+        set c = slice(bare, i, i + 1)
+        if !contains("0123456789abcdef", c) {
+            return false
+        }
+    }
+    return true
+}
+
+// Массив проблем в publishers.json ([] — всё в порядке). Файл необязательный:
+// профиль = { name, display?, summary?, github?, gitlab?, homepage?, keys[] }.
+// keys обязательны: без них издателю нечем верифицировать релизы.
+// Заодно проверяются ссылки: запись индекса с "publisher" должна указывать
+// на существующий профиль.
+fun publishers_errors() -> string[] {
+    set out: string[] = []
+    if !file_exists("publishers.json") {
+        return out
+    }
+    if !json_validate(file_read_text("publishers.json")) {
+        out.push("publishers.json is not valid JSON")
+        return out
+    }
+    set doc = json_parse(file_read_text("publishers.json"))
+    set seen: string[] = []
+    for i in 0..doc.len() {
+        set pr = doc.at(i)
+        set nm = pr.get("name").as_string_or("")
+        if !valid_name(nm) {
+            out.push("publishers.json: publisher #" + cast(i + 1, "string") + " has a bad name \"" + nm + "\" (a-z, 0-9, _ and -)")
+            continue
+        }
+        for k in 0..seen.len() {
+            if eq(seen[k], nm) {
+                out.push("publishers.json: duplicate publisher \"" + nm + "\"")
+            }
+        }
+        seen.push(nm)
+        set ks = pr.get("keys")
+        if ks.len() == 0 {
+            out.push("publishers.json: publisher \"" + nm + "\" has no keys: nothing can be verified against it")
+        }
+        for k in 0..ks.len() {
+            if !fp_ok(ks.at(k).as_string_or("")) {
+                out.push("publishers.json: publisher \"" + nm + "\" has a bad key fingerprint \"" + ks.at(k).as_string_or("") + "\"")
+            }
+        }
+        set gh = pr.get("github").as_string_or("")
+        set gl = pr.get("gitlab").as_string_or("")
+        set hp = pr.get("homepage").as_string_or("")
+        if gh.len() == 0 && gl.len() == 0 && hp.len() == 0 {
+            out.push("publishers.json: publisher \"" + nm + "\" has no github/gitlab/homepage: nothing to bind to")
+        }
+        if hp.len() > 0 && !str_starts(hp, "https://") {
+            out.push("publishers.json: publisher \"" + nm + "\" homepage must start with https://")
+        }
+    }
+    set all = dir_walk("index")
+    for i in 0..all.len() {
+        set p = all[i]
+        if !str_ends(p, ".json") {
+            continue
+        }
+        set d = json_parse(file_read_text(p))
+        set pn = d.get("publisher").as_string_or("")
+        if pn.len() == 0 {
+            continue
+        }
+        set found = false
+        for k in 0..doc.len() {
+            if eq(doc.at(k).get("name").as_string_or(""), pn) {
+                rewrite found = true
+            }
+        }
+        if !found {
+            out.push(p + ": publisher \"" + pn + "\" has no profile in publishers.json")
+        }
+    }
+    return out
+}
 
 public fun cmd_index_catalog(keyname: string) {
     need_checkout()
@@ -342,6 +554,11 @@ public fun cmd_index_catalog(keyname: string) {
             o.set("kind", json_string(doc.get("kind").as_string_or("lib")))
             o.set("version", json_string(best))
             o.set("summary", json_string(doc.get("summary").as_string_or("")))
+            o.set("license", json_string(doc.get("license").as_string_or("")))
+            o.set("homepage", json_string(doc.get("homepage").as_string_or("")))
+            o.set("repository", json_string(doc.get("repository").as_string_or("")))
+            o.set("tags", doc.get("tags"))
+            o.set("publisher", doc.get("publisher"))
             pk.push(o)
         }
     }
@@ -349,14 +566,34 @@ public fun cmd_index_catalog(keyname: string) {
     if file_exists("catalog.json") {
         rewrite seq = json_parse(file_read_text("catalog.json")).get("seq").as_int() + 1
     }
+    set perr = profile_errors()
+    if perr.len() > 0 {
+        panic(err(perr[0] + " (fix profiles.json)", 224, "profiles.json"))
+    }
     set root = json_object()
     root.set("seq", json_int(seq))
     root.set("expires", json_int(now_secs() + ENTRY_LIFETIME))
     root.set("packages", pk.cp())
+    root.set("profiles", read_profiles_doc().cp())
+    set pberr = publishers_errors()
+    if pberr.len() > 0 {
+        panic(err(pberr[0] + " (fix publishers.json)", 224, "publishers.json"))
+    }
+    root.set("publishers", read_publishers_doc().cp())
     set text = json_pretty(root) + "\n"
     file_write_text("catalog.json", text)
     file_write_text("catalog.json.sig", sign_text(keyname, text) + "\n")
-    ok("wrote catalog.json and .sig " + c_dim(cast(pk.len(), "string") + " packages, seq " + cast(seq, "string")))
+    set ptail = ""
+    set prof = root.get("profiles")
+    if prof.len() > 0 {
+        rewrite ptail = ", " + cast(prof.len(), "string") + " profiles"
+    }
+    set pbtail = ""
+    set pbs = root.get("publishers")
+    if pbs.len() > 0 {
+        rewrite pbtail = ", " + cast(pbs.len(), "string") + " publisher(s)"
+    }
+    ok("wrote catalog.json and .sig " + c_dim(cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages") + ptail + pbtail + ", seq " + cast(seq, "string")))
 }
 
 // ── renew-all ───────────────────────────────────────────────────────────
@@ -377,7 +614,7 @@ public fun cmd_index_renew_all(keyname: string, days: int64) {
             for k in 0..vs.len() {
                 versions.push(vs.at(k).cp())
             }
-            write_entry(doc.get("name").as_string(), doc.get("seq").as_int() + 1, versions, keyname, "", "", "", "", true)
+            write_entry(doc.get("name").as_string(), doc.get("seq").as_int() + 1, versions, keyname, "", "", "", "", "", json_array([]), "", true)
             rewrite renewed += 1
         }
     }
@@ -423,6 +660,13 @@ public fun cmd_index_cosign(name: string, keyname: string) {
     }
     if old.get("license").as_string_or("").len() > 0 {
         root.set("license", json_string(old.get("license").as_string_or("")))
+    }
+    if old.get("repository").as_string_or("").len() > 0 {
+        root.set("repository", json_string(old.get("repository").as_string_or("")))
+    }
+    set oct = old.get("tags")
+    if oct.len() > 0 {
+        root.set("tags", oct.cp())
     }
     root.set("seq", json_int(old.get("seq").as_int()))
     root.set("expires", json_int(old.get("expires").as_int()))

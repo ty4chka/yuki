@@ -16,7 +16,7 @@
 load core.utils: cast
 load std.stdotool.live_area: LiveArea
 load std.io: println
-load .ui: ok, rule, c_accent, c_good, c_warn, c_bad, c_dim, c_speed, c_bold, render_bar
+load .ui: ok, rule, c_accent, c_good, c_warn, c_bad, c_dim, c_speed, c_bold, render_bar, fmt_secs
 load .theme: sym, spinner_frames, paint
 load .util: now_ms, str_pad_end
 
@@ -35,6 +35,7 @@ public class InstallView {
     public last_draw: int64
     public speed: string
     public activity: string
+    public start_ms: int64
 
     // states: 0 в очереди, 1 качается, 2 скачан, 3 проверен, 4 ошибка
     fun init(title: string, animated: bool) {
@@ -52,6 +53,7 @@ public class InstallView {
         rewrite this.last_draw = 0
         rewrite this.speed = ""
         rewrite this.activity = ""
+        rewrite this.start_ms = now_ms()
     }
 
     public fun add_node(name: string, version: string, parent: int64) -> int64 {
@@ -96,7 +98,11 @@ public class InstallView {
     // Перейти к фазе p; note описывает результат предыдущей.
     public fun set_phase(p: int64, note: string) {
         if p > 0 && p <= 3 {
-            rewrite this.notes[p - 1] = note + ""
+            set tail = ""
+            if p > 1 {
+                rewrite tail = c_dim(" · " + fmt_secs(now_ms() - this.start_ms))
+            }
+            rewrite this.notes[p - 1] = note + tail
         }
         rewrite this.phase = p
         if !this.animated {

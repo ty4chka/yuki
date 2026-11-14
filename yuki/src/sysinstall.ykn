@@ -31,6 +31,8 @@ load .stage: stage_create, stage_remove, run_child, write_roots
 load .sysplan: PNode, plan_nodes, spec_name, spec_ver
 load .sysbuild: build_policy
 load .pipeline: archive_ext
+load .scan: scan_dir, print_report
+load .publisher: pub_doc, pub_name_in, pub_in, pub_has_key, pub_display_in, pub_links_in
 load .policy: policy_check, policy_check_link
 load .verify: VerifyError, check_blake3, audit_tar
 load .apply: ApplyItem, apply_transaction, remove_package, rollback_locked, check_package
@@ -52,12 +54,20 @@ fun ask(question: string, default_yes: bool) -> bool {
     if default_yes {
         rewrite hint = "[Y/n]"
     }
-    print("  " + c_accent("::") + " " + question + " " + c_dim(hint) + " ")
+    println("")
+    println("  " + c_accent("::") + " " + question + " " + c_dim(hint))
+    print("  " + c_dim("->") + " ")
     set answer = str_lower(trim(read_line()))
-    if answer.len() == 0 {
-        return default_yes
+    set yes = default_yes
+    if answer.len() > 0 {
+        rewrite yes = eq(answer, "y") || eq(answer, "yes")
     }
-    return eq(answer, "y") || eq(answer, "yes")
+    if yes {
+        println("  " + c_dim("->") + " " + c_good("yes"))
+    } else {
+        println("  " + c_dim("->") + " " + c_bad("no"))
+    }
+    return yes
 }
 
 // ── план и подтверждения ────────────────────────────────────────────────
@@ -76,6 +86,25 @@ fun show_plan(ref nodes: PNode[]) {
             println("    " + c_dim("=") + " " + label + c_dim("   already installed"))
         } else {
             println("    " + c_bad(sym("fail")) + " " + label + c_bad("   no binary for this platform and no source"))
+        }
+    }
+    // издатель: подпись релиза должна сходиться с ключами его профиля
+    set cat = pub_doc()
+    for i in 0..nodes.len() {
+        set pn = pub_name_in(cat, nodes[i].rel.name)
+        if eq(pn, "") {
+            continue
+        }
+        set pfound = false
+        set pub = pub_in(cat, pn, ref pfound)
+        if !pfound {
+            println("    " + c_warn(sym("warn")) + " " + nodes[i].rel.name + c_dim(" " + sym("arrow") + " publisher ") + c_accent(pn) + c_warn(" is not in the catalog"))
+            continue
+        }
+        if pub_has_key(pub, nodes[i].rel.signer) {
+            println("    " + c_good(sym("ok")) + " " + c_accent(pub_display_in(cat, pn)) + c_dim(" (" + pub_links_in(cat, pn) + ") signs " + nodes[i].rel.name + " with " + nodes[i].rel.signer))
+        } else {
+            println("    " + c_bad(sym("fail")) + " " + c_accent(pub_display_in(cat, pn)) + c_bad(" signer " + nodes[i].rel.signer + " is NOT among the keys of the publisher for " + nodes[i].rel.name + " — re-check"))
         }
     }
     println("")
@@ -350,6 +379,28 @@ fun install_core(stage: string, ref roots: string[]) {
 
     set items: ApplyItem[] = []
     set unpinned = collect(stage, ref nodes, ref items)
+
+    // осмотр содержимого до записи в систему: сводка «что плохо выглядит»
+    set worst: int64 = 0
+    for i in 0..items.len() {
+        view.set_activity("content scan: " + items[i].name)
+        view.draw(true)
+        set hits = scan_dir(items[i].root)
+        if hits.len() > 0 {
+            set s = print_report(items[i].name, ref hits)
+            if s > worst {
+                rewrite worst = s
+            }
+        } else {
+            view.log(items[i].name + ": content scan clean")
+        }
+    }
+    view.set_activity("")
+    if worst >= 3 && !flag("YUKI_ALLOW_RISKY") {
+        if !ask("High-risk patterns found. Install anyway?", false) {
+            panic(err("aborted by the content scan", 758, ""))
+        }
+    }
     for i in 0..nodes.len() {
         view.set_state(vmap[i], 3)
     }

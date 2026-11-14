@@ -20,8 +20,11 @@ load .sysinstall: cmd_sys_install_many, cmd_sys_uninstall, cmd_sys_autoremove, c
 load .tools: cmd_show, cmd_outdated, cmd_search, cmd_list, cmd_orphans, cmd_tree, cmd_rdeps, cmd_related, cmd_graph, cmd_why, cmd_doctor, cmd_config, cmd_clean, cmd_hold, cmd_unhold, cmd_export, cmd_import, cmd_explain, cmd_completions, cmd_help, cmd_pack
 load .indexadmin: cmd_index_add, cmd_index_check, cmd_index_catalog, cmd_index_renew_all, cmd_index_cosign
 load .rotation: cmd_keys_refresh
+load .scan: cmd_scan
+load .profiles: cmd_profile_add, cmd_profile_remove, cmd_profile_list, cmd_profile_show, cmd_profile_install, cmd_catalog, cmd_tags
+load .publisher: cmd_publisher_list, cmd_publisher_show
 load .selftest: cmd_selftest
-load .cmds: cmd_verify, cmd_verify_sig, cmd_inspect, cmd_add, cmd_remove, cmd_install, cmd_update, cmd_audit, cmd_publish, cmd_yank, cmd_renew, cmd_keys_gen, cmd_keys_export, cmd_keys_sign, cmd_keys_list, cmd_keys_trust, cmd_keys_untrust, cmd_theme_path, cmd_theme_init, cmd_theme_show
+load .cmds: cmd_verify, cmd_verify_sig, cmd_inspect, cmd_add, cmd_remove, cmd_install, cmd_update, cmd_audit, cmd_publish, cmd_yank, cmd_renew, cmd_keys_gen, cmd_keys_export, cmd_keys_sign, cmd_keys_list, cmd_keys_trust, cmd_keys_untrust, cmd_theme_path, cmd_theme_init, cmd_theme_show, cmd_theme_list, cmd_theme_use
 
 static VERSION: string = "0.1.0"
 
@@ -38,6 +41,8 @@ fun usage() {
     row("autoremove", "", "remove orphaned dependencies")
     row("hold | unhold", "<pkg>", "keep a package at its version")
     row("rollback | history", "[id]", "undo a transaction, see the log")
+    row("profile", "list|show|add|remove|install", "package sets: yours and curated ones")
+    row("publisher", "list|show", "who stands behind a package: platforms + signing keys")
     println("")
     println("  look around  " + c_dim("(no root needed)"))
     row("search | show", "<word> | <pkg>", "find packages, read their description")
@@ -48,6 +53,7 @@ fun usage() {
     row("outdated | orphans", "", "what can be upgraded, what is unneeded")
     row("check | sys-audit", "[pkg]", "files vs database, withdrawn versions")
     row("export | import", "[file]", "move a package list between machines")
+    row("catalog | tags", "[query] | [prefix]", "browse the signed catalog, its topics")
     println("")
     println("  project  " + c_dim("(libraries in yuki.toml)"))
     row("add | remove", "<lib>", "resolve, verify, pin in yuki.toml")
@@ -55,7 +61,7 @@ fun usage() {
     println("")
     println("  trust and look")
     row("keys", "gen|trust|untrust|list|export|refresh", "signing keys and trusted keys")
-    row("theme", "init|show|path", "colors, symbols, animation")
+    row("theme", "init|show|path|list|use", "colors, symbols, animation, presets")
     println("")
     println("  maintainers")
     row("pack", "<name> <dir> <out>", "build a package archive")
@@ -154,7 +160,7 @@ fun strip_flags(ref raw: string[]) -> string[] {
 }
 
 fun is_system_cmd(cmd: string) -> bool {
-    return eq(cmd, "install") || eq(cmd, "reinstall") || eq(cmd, "uninstall") || eq(cmd, "autoremove") || eq(cmd, "upgrade") || eq(cmd, "self-update") || eq(cmd, "list") || eq(cmd, "info") || eq(cmd, "files") || eq(cmd, "owns") || eq(cmd, "why") || eq(cmd, "tree") || eq(cmd, "rdeps") || eq(cmd, "related") || eq(cmd, "graph") || eq(cmd, "orphans") || eq(cmd, "outdated") || eq(cmd, "search") || eq(cmd, "show") || eq(cmd, "check") || eq(cmd, "sys-audit") || eq(cmd, "hold") || eq(cmd, "unhold") || eq(cmd, "history") || eq(cmd, "rollback") || eq(cmd, "export") || eq(cmd, "import") || eq(cmd, "doctor") || eq(cmd, "config")
+    return eq(cmd, "install") || eq(cmd, "reinstall") || eq(cmd, "uninstall") || eq(cmd, "autoremove") || eq(cmd, "upgrade") || eq(cmd, "self-update") || eq(cmd, "list") || eq(cmd, "info") || eq(cmd, "files") || eq(cmd, "owns") || eq(cmd, "why") || eq(cmd, "tree") || eq(cmd, "rdeps") || eq(cmd, "related") || eq(cmd, "graph") || eq(cmd, "orphans") || eq(cmd, "outdated") || eq(cmd, "search") || eq(cmd, "show") || eq(cmd, "check") || eq(cmd, "sys-audit") || eq(cmd, "hold") || eq(cmd, "unhold") || eq(cmd, "history") || eq(cmd, "rollback") || eq(cmd, "export") || eq(cmd, "import") || eq(cmd, "doctor") || eq(cmd, "config") || eq(cmd, "profile") || eq(cmd, "publisher") || eq(cmd, "catalog") || eq(cmd, "tags")
 }
 
 // ── диспетчеры ──────────────────────────────────────────────────────────
@@ -255,6 +261,51 @@ fun run_system(ref argv: string[]) -> bool {
         cmd_import(argv[1])
     } elif eq(cmd, "doctor") && n == 1 {
         cmd_doctor()
+    } elif eq(cmd, "profile") && n >= 2 {
+        set sub = argv[1]
+        if eq(sub, "list") && n == 2 {
+            cmd_profile_list()
+        } elif eq(sub, "show") && n == 3 {
+            cmd_profile_show(argv[2])
+        } elif eq(sub, "add") && n >= 4 {
+            set ps: string[] = []
+            for i in 3..n {
+                ps.push(argv[i])
+            }
+            cmd_profile_add(argv[2], ref ps)
+        } elif eq(sub, "remove") && n >= 3 {
+            set ps: string[] = []
+            for i in 3..n {
+                ps.push(argv[i])
+            }
+            cmd_profile_remove(argv[2], ref ps)
+        } elif eq(sub, "install") && n == 3 {
+            cmd_profile_install(argv[2])
+        } else {
+            return false
+        }
+    } elif eq(cmd, "publisher") && n >= 2 {
+        if eq(argv[1], "list") && n == 2 {
+            cmd_publisher_list()
+        } elif eq(argv[1], "show") && n == 3 {
+            cmd_publisher_show(argv[2])
+        } else {
+            return false
+        }
+    } elif eq(cmd, "catalog") && n <= 2 {
+        if n == 2 {
+            cmd_catalog(argv[1])
+        } else {
+            cmd_catalog("")
+        }
+    } elif eq(cmd, "tags") && n <= 2 {
+        if n == 2 {
+            cmd_tags(argv[1])
+        } else {
+            cmd_tags("")
+        }
+    } elif eq(cmd, "scan") && n == 2 {
+        cmd_scan(argv[1])
     } elif eq(cmd, "config") && n == 1 {
         cmd_config()
     } else {
@@ -334,13 +385,18 @@ fun run_project(ref argv: string[]) -> bool {
         } else {
             return false
         }
-    } elif eq(cmd, "theme") && n == 2 {
-        if eq(argv[1], "init") {
+    } elif eq(cmd, "theme") && n >= 2 {
+        set sub = argv[1]
+        if eq(sub, "init") && n == 2 {
             cmd_theme_init()
-        } elif eq(argv[1], "show") {
+        } elif eq(sub, "show") && n == 2 {
             cmd_theme_show()
-        } elif eq(argv[1], "path") {
+        } elif eq(sub, "path") && n == 2 {
             cmd_theme_path()
+        } elif eq(sub, "list") && n == 2 {
+            cmd_theme_list()
+        } elif eq(sub, "use") && n == 3 {
+            cmd_theme_use(argv[2])
         } else {
             return false
         }

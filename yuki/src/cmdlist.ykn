@@ -4,7 +4,7 @@ load std.strings: eq
 load .util: edit_distance, str_starts, sjoin
 
 public fun all_commands() -> string[] {
-    return ["install", "reinstall", "uninstall", "upgrade", "self-update", "list", "info", "files", "owns", "why", "tree", "check", "sys-audit", "outdated", "hold", "unhold", "history", "rollback", "export", "import", "search", "show", "add", "remove", "fetch", "update", "audit", "keys", "theme", "pack", "publish", "yank", "renew", "index", "verify", "verify-sig", "inspect", "doctor", "config", "clean", "explain", "selftest", "completions", "help", "version"]
+    return ["install", "reinstall", "uninstall", "upgrade", "self-update", "list", "info", "files", "owns", "why", "tree", "check", "sys-audit", "outdated", "hold", "unhold", "history", "rollback", "export", "import", "search", "show", "catalog", "tags", "profile", "publisher", "add", "remove", "fetch", "update", "audit", "keys", "theme", "pack", "publish", "yank", "renew", "index", "verify", "verify-sig", "inspect", "doctor", "config", "clean", "explain", "selftest", "completions", "help", "version"]
 }
 
 // Самая похожая команда или "" (если ничего близкого нет).
@@ -42,6 +42,7 @@ public fun completion_script(shell: string) -> string {
 // Подробная справка: [usage, описание, пример, ...]
 public fun help_lines(cmd: string) -> string[] {
     if eq(cmd, "install") { return ["yuki install <pkg>[@ver]  (sudo)", "Installs an application: a prebuilt binary for your platform, or builds it from source in a sandbox if you agree.", "sudo yuki install ripgrep", "sudo yuki install ripgrep@14.1.0 --yes", "flags: --yes (skip the plan prompt), --allow-build (accept source builds), --overwrite"] }
+    if eq(cmd, "scan") { return ["yuki scan <dir>", "Heuristic review of an unpacked package tree: what looks bad and why (reverse shells, miners, persistence, obfuscated payloads).", "yuki scan ./unpacked/ripgrep"] }
     if eq(cmd, "reinstall") { return ["yuki reinstall <pkg>  (sudo)", "Installs the same version again: repairs modified or missing files.", "sudo yuki reinstall ripgrep"] }
     if eq(cmd, "uninstall") { return ["yuki uninstall <pkg>  (sudo)", "Removes a package with a rollback journal. Refuses if another package needs it (use --force).", "sudo yuki uninstall ripgrep"] }
     if eq(cmd, "upgrade") { return ["yuki upgrade [pkg]  (sudo)", "Shows old → new versions, asks once, then upgrades. Held packages are skipped.", "sudo yuki upgrade", "sudo yuki upgrade ripgrep"] }
@@ -61,7 +62,10 @@ public fun help_lines(cmd: string) -> string[] {
     if eq(cmd, "rollback") { return ["yuki rollback [id]  (sudo)", "Undoes a transaction from its journal: files, directories and database. Without an id it takes the last one.", "sudo yuki rollback"] }
     if eq(cmd, "export") { return ["yuki export", "Prints explicitly installed packages as name@version lines.", "yuki export > packages.txt"] }
     if eq(cmd, "import") { return ["yuki import <file>  (sudo)", "Installs every package listed in a file made by `yuki export`.", "sudo yuki import packages.txt --yes"] }
-    if eq(cmd, "search") { return ["yuki search <word>", "Searches the signed catalog by name and summary.", "yuki search grep"] }
+    if eq(cmd, "search") { return ["yuki search <word> | tag:<tag>", "Searches the signed catalog by name, summary and tags. `tag:x` matches a tag exactly.", "yuki search grep", "yuki search tag:editor"] }
+    if eq(cmd, "catalog") { return ["yuki catalog [query]", "The signed catalog as a readable list: summary, tags, license, repository. A query filters it; without one it lists everything.", "yuki catalog", "yuki catalog editor"] }
+    if eq(cmd, "tags") { return ["yuki tags [prefix]", "Topics used across the catalog, most used first.", "yuki tags", "yuki tags net"] }
+    if eq(cmd, "profile") { return ["yuki profile list | show <name> | install <name> | add <name> <pkg>... | remove <name> [pkg]...", "Named package sets. Yours live in /var/lib/yuki/profiles; the catalog may offer curated ones too. install runs the normal verified install for every package.", "sudo yuki profile add dev git ripgrep", "yuki profile list", "sudo yuki profile install dev"] }
     if eq(cmd, "show") { return ["yuki show <pkg>[@ver]", "Shows what the index offers: version, kind, dependencies, whether a binary exists for your platform.", "yuki show ripgrep"] }
     if eq(cmd, "add") { return ["yuki add <lib>[@ver]", "Adds a library and its dependency tree to [libs.runtime] in yuki.toml, verified and hash-pinned.", "yuki add json-yukino"] }
     if eq(cmd, "remove") { return ["yuki remove <lib>", "Removes a library from yuki.toml and lists dependencies that came with it."] }
@@ -69,7 +73,7 @@ public fun help_lines(cmd: string) -> string[] {
     if eq(cmd, "update") { return ["yuki update [lib]", "Moves libraries to newer signed releases and rewrites their dependency lines."] }
     if eq(cmd, "audit") { return ["yuki audit", "Compares yuki.toml with the signed index: hash changes, withdrawn versions."] }
     if eq(cmd, "keys") { return ["yuki keys gen|trust|untrust|list|export|sign|refresh", "Manages signing keys and the keys you trust.", "yuki keys gen main", "sudo yuki keys trust main <pubkey>", "yuki keys sign main rotation.json   (prints a line for rotation.sigs)", "sudo yuki keys refresh   (applies signed rotation and revocation)"] }
-    if eq(cmd, "theme") { return ["yuki theme init|show|path", "Creates, previews and locates theme.toml (colors, symbols, animation)."] }
+    if eq(cmd, "theme") { return ["yuki theme init | show | path | list | use <preset>", "Creates, previews and locates theme.toml. Presets: default, ansi, mono, light, contrast; `use` keeps the old file as .bak.", "yuki theme list", "yuki theme use light"] }
     if eq(cmd, "pack") { return ["yuki pack <name> <dir> <out.tar.zst>", "Builds a package archive from a directory (usr/bin/..., etc/...), checks it against the install policy and prints the blake3 and a ready index snippet.", "yuki pack ripgrep ./pkgroot ripgrep-14.1.0-linux-x86_64.tar.zst"] }
     if eq(cmd, "publish") { return ["yuki publish <lib> <ver> <url> <key> [dep@ver ...]", "Maintainer: adds a library release to the index checkout and signs it."] }
     if eq(cmd, "yank") { return ["yuki yank <name> <ver> <key>", "Maintainer: withdraws a release; clients flag it in `audit` and `sys-audit`."] }

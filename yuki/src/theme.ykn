@@ -401,3 +401,83 @@ public fun theme_write_template() -> string {
     file_write_text(path, theme_template())
     return path
 }
+
+// ── готовые пресеты ─────────────────────────────────────────────────────
+
+public fun theme_presets() -> string[] {
+    return ["default", "ansi", "mono", "light", "contrast"]
+}
+
+public fun theme_preset_hint(name: string) -> string {
+    if eq(name, "default") { return "the usual yuki look (rgb, tuned for dark terminals)" }
+    if eq(name, "ansi") { return "colors come from your terminal theme, nothing hardcoded" }
+    if eq(name, "mono") { return "no colors at all: only bold and dim" }
+    if eq(name, "light") { return "rgb palette tuned for light backgrounds" }
+    if eq(name, "contrast") { return "high contrast: bright ansi colors + bold, works everywhere" }
+    return ""
+}
+
+fun preset_colors(name: string) -> string[] {
+    if eq(name, "light") {
+        return ["#1e66f5", "#40a02b", "#df8e1d", "#d20f39+bold", "#8839ef+bold", "dim", "#04a5e5"]
+    }
+    if eq(name, "contrast") {
+        return ["ansi:bright_white+bold", "ansi:bright_green+bold", "ansi:bright_yellow+bold", "ansi:bright_red+bold", "ansi:white+bold", "dim", "ansi:bright_cyan+bold"]
+    }
+    return ["#89b4fa", "#a6e3a1", "#f9e2af", "#f38ba8+bold", "#cba6f7+bold", "dim", "#94e2d5"]
+}
+
+fun preset_lines(name: string, palette: string, c: string[]) -> string[] {
+    return [
+        "# yuki theme preset: " + name,
+        "# written by `yuki theme use " + name + "`; edit freely or delete the file.",
+        "",
+        "palette = \"" + palette + "\"",
+        "",
+        "[colors]",
+        "accent = \"" + c[0] + "\"",
+        "good   = \"" + c[1] + "\"",
+        "warn   = \"" + c[2] + "\"",
+        "bad    = \"" + c[3] + "\"",
+        "logo   = \"" + c[4] + "\"",
+        "dim    = \"" + c[5] + "\"",
+        "speed  = \"" + c[6] + "\"",
+        "",
+        "[style]",
+        "# unicode = true",
+        "# animation = true",
+        "# bar_gradient = true"
+    ]
+}
+
+// Готовый theme.toml пресета; "default" совпадает со встроенными значениями.
+// Неизвестное имя возвращает "" — вызывающая команда сама объяснит ошибку.
+public fun theme_preset_toml(name: string) -> string {
+    if eq(name, "default") {
+        return theme_template()
+    }
+    if eq(name, "light") {
+        return sjoin(preset_lines("light", "rgb", preset_colors("light")), "\n") + "\n"
+    }
+    if eq(name, "ansi") {
+        return sjoin(preset_lines("ansi", "ansi", preset_colors("")), "\n") + "\n"
+    }
+    if eq(name, "contrast") {
+        return sjoin(preset_lines("contrast", "ansi", preset_colors("contrast")), "\n") + "\n"
+    }
+    if eq(name, "mono") {
+        set l = [
+            "# yuki theme preset: mono",
+            "# written by `yuki theme use mono`; edit freely or delete the file.",
+            "",
+            "palette = \"mono\"",
+            "",
+            "[style]",
+            "# unicode = true",
+            "# animation = true",
+            "# bar_gradient = true"
+        ]
+        return sjoin(l, "\n") + "\n"
+    }
+    return ""
+}

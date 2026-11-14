@@ -29,6 +29,7 @@ public fun explain_lines(code: int64) -> string[] {
     if code == 218 { return mk("Unknown package kind", "kind must be lib or app.", "Fix the entry.") }
     if code == 219 { return mk("Bad binary or source release", "A bin/src block has a bad URL or checksum.", "Rebuild the entry with `yuki index add`.") }
     if code == 220 || code == 221 { return mk("Bad build description", "build needs 1-16 plain arguments; files needs 1-256 safe from/to paths with mode 644 or 755.", "Fix the release json and re-add it.") }
+    if code == 224 { return mk("profiles.json is invalid", "The catalog builder refuses profiles.json: bad JSON, bad names, duplicate profiles or a package that is not in the index.", "Fix the file in the index repository; `yuki index check` prints the exact lines.") }
     if code == 301 { return mk("Checksum mismatch", "The downloaded file does not match the blake3 in the signed index. It was changed in transit or at the source.", "Do not use the file. Retry once; if it repeats, the source was tampered with or the index entry is wrong.") }
     if code == 302 { return mk("Malformed checksum", "Expected blake3:<64 hex>, the format yukino uses in [libs.runtime].", "Copy the checksum exactly.") }
     if code == 303 { return mk("Signature is not valid", "No trusted key produced a valid signature for this data.", "Check `yuki keys list`; refresh keys with `sudo yuki keys refresh`; otherwise the data is forged.") }
@@ -67,6 +68,12 @@ public fun explain_lines(code: int64) -> string[] {
     if code == 751 { return mk("Unprivileged helper failed", "The sandboxed network/build step failed. Nothing was changed on your system.", "Read the message, check the network, retry.") }
     if code == 752 { return mk("Nothing to install", "No binary for your platform and no source release.", "Ask the maintainer for a build for your target, see `yuki config`.") }
     if code == 753 { return mk("Aborted", "You answered no, or the artifact layout was unexpected.", "Run again and confirm.") }
+    if code == 758 { return mk("Aborted by the content scan", "The package contents match high-risk patterns (see the report above).", "Re-check the package with its upstream; if you accept the risk, run again with YUKI_ALLOW_RISKY=1.") }
+    if code == 764 { return mk("No such profile", "No local profile with this name, and the catalog offers none either.", "`yuki profile list` shows what exists; create one with `sudo yuki profile add <name> <pkg>...`.") }
+    if code == 765 { return mk("Profile file is damaged", "The profile json in <state>/profiles is not valid JSON.", "Fix or delete the file, then create the profile again.") }
+    if code == 766 { return mk("Profile has no packages", "A profile must reference at least one package.", "Add packages with `sudo yuki profile add <name> <pkg>...`.") }
+    if code == 767 { return mk("Unknown theme preset", "There is no built-in preset with this name.", "`yuki theme list` shows the presets: default, ansi, mono, light, contrast.") }
+    if code == 770 { return mk("No such publisher", "The catalog has no publisher profile with this name.", "`yuki publisher list` shows the publishers the catalog knows about.") }
     if code == 754 { return mk("New yuki failed its self-check", "The upgraded binary did not start, so the upgrade was rolled back.", "You still have the previous version. Report the release.") }
     if code == 755 { return mk("Install failed", "An unexpected error stopped the install.", "Run `yuki doctor` and retry.") }
     if code == 756 { return mk("Files differ from the database", "Files were modified or are missing.", "Reinstall with `sudo yuki reinstall <pkg>`.") }
