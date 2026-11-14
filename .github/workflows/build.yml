@@ -54,13 +54,12 @@ jobs:
       - name: Stage 1 - Yukino compiler
         run: |
           # Пин компилятора: после 4ca06e99 (feat[compiler]: opt, 2026-11-14) — fast_math,
-# #[no_region] и переписанный region elision дают SIGILL у selftest на aarch64
-# (на GH-раннере зелёное, на реальном телефоне — Illegal instruction).
-# Откатываемся на последний проверенный коммит; поднимать пин — только после
-# проверки selftest на устройстве.
-git clone https://github.com/yukitsuri/yukino "$RUNNER_TEMP/yukino"
-cd "$RUNNER_TEMP/yukino" && git checkout -q 753ee4e9374bb33b3dbbaf85028f7f66254207ff
-          cd "$RUNNER_TEMP/yukino"
+          # #[no_region] и переписанный region elision дают SIGILL у selftest на aarch64
+          # (на GH-раннере зелёное, на реальном телефоне — Illegal instruction).
+          # Откатываемся на последний проверенный коммит; поднимать пин — только после
+          # проверки selftest на устройстве.
+          git clone https://github.com/yukitsuri/yukino "$RUNNER_TEMP/yukino"
+          cd "$RUNNER_TEMP/yukino" && git checkout -q 753ee4e9374bb33b3dbbaf85028f7f66254207ff
           # Патч ABI на aarch64: рантайм (Rust) принимает указатель результата ОБЫЧНЫМ
           # первым аргументом (x0), а кодоген объявлял его `sret` (на aarch64 это x8).
           # Итог: args() и другие sret-хелперы писали по мусорному x0 -> SIGSEGV.
