@@ -23,7 +23,7 @@ load std.io: println
 load std.json: JsonValue, json_parse
 load std.strings: eq
 load .errors: YukiError, err
-load .tools: verified_catalog
+load .catalog: verified_catalog
 load .ui: info, card, c_accent, c_good, c_dim
 load .theme: sym
 load .util: sjoin, str_split, str_pad_end, plural

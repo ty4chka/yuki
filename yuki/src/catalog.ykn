@@ -1,0 +1,65 @@
+// catalog.ykn — подписанный каталог одним куском.
+// Отдельный модуль, чтобы разорвать цикл зависимостей
+// tools -> sysinstall -> publisher -> tools (E0302): и tools, и publisher,
+// и sysinstall читают каталог через verified_catalog() отсюда.
+
+load core.panic: panic
+load std.json: json_parse
+load std.fs.files: file_read_text
+load std.strings: trim
+load .errors: YukiError, err
+load .index: seen_get, seen_set
+load .stage: stage_create, stage_remove, run_child
+load .trust: trusted_keys, trusted_roles
+load .verify: VerifyError, verify_text_with_any
+load .priv: is_root
+load .util: join2, now_secs
+load .view: InstallView
+
+public fun verified_catalog() -> string {
+    set stage = stage_create()
+    set text = ""
+    sus {
+        set quiet = init InstallView("", false)
+        set nomap: int64[] = []
+        run_child(stage, "catalog", ref ~quiet, ref nomap)
+        set dl = join2(stage, "dl")
+        rewrite text = file_read_text(join2(dl, "catalog.json"))
+        set sig = trim(file_read_text(join2(dl, "catalog.json.sig")))
+        set all_keys = trusted_keys()
+        set all_roles = trusted_roles()
+        set keys: string[] = []
+        for ki in 0..all_keys.len() {
+            if ki < all_roles.len() && eq(all_roles[ki], "publisher") {
+                keys.push(all_keys[ki])
+            }
+        }
+        if keys.len() == 0 {
+            panic(err("no trusted publisher keys yet", 202, "catalog.json"))
+        }
+        if verify_text_with_any(ref keys, text, sig) < 0 {
+            panic(VerifyError { message: "catalog is not signed by a trusted publisher key", code: 3, path: "catalog.json" })
+        }
+        set doc = json_parse(text)
+        if doc.get("expires").as_int() < now_secs() {
+            panic(err("catalog has expired", 204, "catalog.json"))
+        }
+        if doc.get("seq").as_int() < seen_get("__catalog__") {
+            panic(err("catalog is older than one already seen (rollback attack?)", 205, "catalog.json"))
+        }
+        if is_root() {
+            seen_set("__catalog__", doc.get("seq").as_int())
+        }
+    } catch e: YukiError {
+        stage_remove(stage)
+        panic(e)
+    } catch e: VerifyError {
+        stage_remove(stage)
+        panic(e)
+    } catch {
+        stage_remove(stage)
+        panic(err("could not load the catalog: " + errkind, 755, ""))
+    }
+    stage_remove(stage)
+    return text
+}

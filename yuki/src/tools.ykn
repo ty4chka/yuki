@@ -24,7 +24,8 @@ load .view: InstallView
 load .sysplan: PNode, plan_nodes
 load .sysbuild: have_bwrap, build_policy
 load .sysdb: db_names, db_read, db_has, db_files, dependents_of, orphans, is_explicit, held_names, is_held
-load .sysinstall: cmd_sys_install, cmd_sys_install_many
+load .sysinstall: cmd_sys_install
+load .catalog: verified_catalog
 load .trust: trusted_keys, threshold
 load .verify: VerifyError, verify_text_with_any, audit_tar
 load .policy: policy_check
@@ -151,53 +152,6 @@ public fun cmd_outdated() {
     }
 }
 
-fun verified_catalog() -> string {
-    set stage = stage_create()
-    set text = ""
-    sus {
-        set quiet = init InstallView("", false)
-        set nomap: int64[] = []
-        run_child(stage, "catalog", ref ~quiet, ref nomap)
-        set dl = join2(stage, "dl")
-        rewrite text = file_read_text(join2(dl, "catalog.json"))
-        set sig = trim(file_read_text(join2(dl, "catalog.json.sig")))
-        set all_keys = trusted_keys()
-        set all_roles = trusted_roles()
-        set keys: string[] = []
-        for ki in 0..all_keys.len() {
-            if ki < all_roles.len() && eq(all_roles[ki], "publisher") {
-                keys.push(all_keys[ki])
-            }
-        }
-        if keys.len() == 0 {
-            panic(err("no trusted publisher keys yet", 202, "catalog.json"))
-        }
-        if verify_text_with_any(ref keys, text, sig) < 0 {
-            panic(VerifyError { message: "catalog is not signed by a trusted publisher key", code: 3, path: "catalog.json" })
-        }
-        set doc = json_parse(text)
-        if doc.get("expires").as_int() < now_secs() {
-            panic(err("catalog has expired", 204, "catalog.json"))
-        }
-        if doc.get("seq").as_int() < seen_get("__catalog__") {
-            panic(err("catalog is older than one already seen (rollback attack?)", 205, "catalog.json"))
-        }
-        if is_root() {
-            seen_set("__catalog__", doc.get("seq").as_int())
-        }
-    } catch e: YukiError {
-        stage_remove(stage)
-        panic(e)
-    } catch e: VerifyError {
-        stage_remove(stage)
-        panic(e)
-    } catch {
-        stage_remove(stage)
-        panic(err("could not load the catalog: " + errkind, 755, ""))
-    }
-    stage_remove(stage)
-    return text
-}
 
 // Издатель пакета: имя для показа и платформы (читаем прямо из каталога).
 fun pub_disp(doc: JsonValue, name: string) -> string {

@@ -20,7 +20,7 @@ load .util: valid_name, now_secs, str_ends, str_starts, join2, str_lower, sjoin,
 load .ui: ok, info, warn, bad, card, kv, c_accent, c_good, c_warn, c_bad, c_dim
 load .theme: sym
 load .sysdb: db_has
-load .tools: verified_catalog
+load .catalog: verified_catalog
 load .publisher: pub_display_in, pub_links_in
 load .sysinstall: cmd_sys_install_many
 
