@@ -107,7 +107,7 @@ public fun run_child(stage: string, mode: string, ref ~view: InstallView, ref jo
             }
             file_write_text(join2(dl, "DONE-" + mode), "ok")
         } catch e: YukiError {
-            file_write_text(join2(dl, "ERROR"), int_str(e.code) + "\n" + e.message)
+            file_write_text(join2(dl, "ERROR"), int_str(cast(e.code, "int64")) + "\n" + e.message)
         } catch e: VerifyError {
             file_write_text(join2(dl, "ERROR"), int_str(300 + e.code) + "\n" + e.message)
         } catch {

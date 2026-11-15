@@ -98,7 +98,7 @@ fun read_chunk(ref ~tls: TlsStream) -> string {
     for i in 0..n {
         out.push(buf[i])
     }
-    return int_str(out)
+    return cast(out, "string")
 }
 
 fun hexval(ch: string) -> int64 {
@@ -393,7 +393,7 @@ fun get_follow(url: string, dest: string, max_bytes: int64, prog_path: string) -
 public fun http_text(url: string, max_bytes: int64) -> string {
     set r = get_follow(url, "", max_bytes, "")
     if r.status != 200 {
-        panic(err("HTTP " + int_str(r.status) + " for " + url, 404, url))
+        panic(err("HTTP " + int_str(cast(r.status, "int64")) + " for " + url, 404, url))
     }
     return r.body
 }
@@ -403,7 +403,7 @@ public fun download(url: string, dest: string, max_bytes: int64, prog_path: stri
     set r = get_follow(url, dest, max_bytes, prog_path)
     if r.status != 200 {
         file_remove(dest)
-        panic(err("HTTP " + int_str(r.status) + " for " + url, 404, url))
+        panic(err("HTTP " + int_str(cast(r.status, "int64")) + " for " + url, 404, url))
     }
     return r.received
 }

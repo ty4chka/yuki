@@ -79,7 +79,7 @@ fun usage() {
 }
 
 fun code_str(n: int32) -> string {
-    set s = int_str(n)
+    set s = int_str(cast(n, "int64"))
     for i in 0..(4 - s.len()) {
         rewrite s = "0" + s
     }

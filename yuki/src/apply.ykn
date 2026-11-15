@@ -81,7 +81,7 @@ fun lock_acquire() {
             panic(err("could not take the lock: " + ld, 730, ld))
         }
     }
-    file_write_text(join2(ld, "pid"), int_str(getpid()))
+    file_write_text(join2(ld, "pid"), int_str(cast(getpid(), "int64")))
 }
 
 fun lock_release() {
@@ -244,7 +244,7 @@ fun scan_package(pkg: string, root: string, ref items: ApplyItem[], n: int64) ->
             if perm == zero {
                 rewrite perm = 420
             }
-            out.push(blake3_file(all[i]) + " " + int_str(perm) + " f " + rel)
+            out.push(blake3_file(all[i]) + " " + int_str(cast(perm, "int64")) + " f " + rel)
         } else {
             panic(err("special files are not allowed: " + rel, 720, pkg))
         }
@@ -293,7 +293,7 @@ fun backup_existing(txid: string, rel: string, dest: string, old_line: string) {
     dir_create_all(path_parent(bak))
     file_copy(dest, bak)
     set perm: uint32 = md.mode & 511
-    jr(txid, "bak " + dest + " " + bak + " " + int_str(perm))
+    jr(txid, "bak " + dest + " " + bak + " " + int_str(cast(perm, "int64")))
 }
 
 // Предварительная проверка политики и файловых конфликтов по всем пакетам транзакции
