@@ -26,7 +26,7 @@ load .errors: YukiError, err
 load .catalog: verified_catalog
 load .ui: info, card, c_accent, c_good, c_dim
 load .theme: sym
-load .util: sjoin, str_split, str_pad_end, plural
+load .util: sjoin, str_split, str_pad_end, plural, int_str
 
 // Подписанный каталог одним куском (одна загрузка на команду).
 public fun pub_doc() -> JsonValue {
@@ -129,7 +129,7 @@ public fun cmd_publisher_list() {
                 rewrite n += 1
             }
         }
-        println("  " + c_good(sym("ok")) + " " + c_accent(str_pad_end(nm, 16)) + c_dim(pub_links_in(ref doc, nm)) + " " + c_dim(cast(n, "string") + " " + plural(n, "package", "packages")))
+        println("  " + c_good(sym("ok")) + " " + c_accent(str_pad_end(nm, 16)) + c_dim(pub_links_in(ref doc, nm)) + " " + c_dim(int_str(n) + " " + plural(n, "package", "packages")))
     }
     info("details: `yuki publisher show <name>`")
 }
@@ -156,7 +156,7 @@ public fun cmd_publisher_show(name: string) {
         rows.push("  " + c_dim("about") + "  " + sm)
     }
     set kn = pub.get("keys").len()
-    rows.push("  " + c_dim("keys") + "  " + cast(kn, "string") + " " + plural(kn, "key", "keys") + c_dim(" — a release counts as verified only when its signature is one of these"))
+    rows.push("  " + c_dim("keys") + "  " + int_str(kn) + " " + plural(kn, "key", "keys") + c_dim(" — a release counts as verified only when its signature is one of these"))
     set own: string[] = []
     set pk = doc.get("packages")
     for i in 0..pk.len() {

@@ -19,7 +19,7 @@ load .view: InstallView
 load .trust: trusted_keys, trusted_roles, threshold, revoke_key, trust_add, fingerprint
 load .verify: verify_text
 load .index: seen_get, seen_set
-load .util: now_secs, is_hex, valid_name, join2, str_lines, str_lower, str_split
+load .util: now_secs, is_hex, valid_name, join2, str_lines, str_lower, str_split, int_str
 load .priv: is_root
 load .ui: ok, info, warn, step, c_accent, c_dim
 
@@ -71,7 +71,7 @@ public fun cmd_keys_refresh() {
         }
         set need = threshold()
         if counted.len() < need {
-            panic(err("rotation is signed by " + cast(counted.len(), "string") + " trusted publisher key(s), " + cast(need, "string") + " required", 760, "rotation.json"))
+            panic(err("rotation is signed by " + int_str(counted.len()) + " trusted publisher key(s), " + int_str(need) + " required", 760, "rotation.json"))
         }
 
         set doc = json_parse(text)

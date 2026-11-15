@@ -20,7 +20,7 @@ load .errors: YukiError, err
 load .config: host_target
 load std.io: println
 load .ui: ok, bad, info, c_dim
-load .util: str_lower, str_pad_end, valid_name, valid_version, ver_cmp, digits_val, edit_distance, is_hex, now_ms, join2, str_split
+load .util: str_lower, str_pad_end, valid_name, valid_version, ver_cmp, digits_val, edit_distance, is_hex, now_ms, join2, str_split, int_str
 load .verify: is_safe_rel_path, link_target_ok, resolve_link_target, checksum_ok_format, verify_text, signed_message
 load .policy: policy_check, policy_check_link
 load .tarpack: tar_pack_tree
@@ -50,7 +50,7 @@ fun check(cond: bool, label: string, ref ~failed: int64) {
 fun selftest_thread(arg: ptr<void>) {
     set path = get_or("YUKI_SELFTEST_FILE", "")
     sus {
-        file_write_text(path, "thread-" + cast(cast(arg, "int64"), "string"))
+        file_write_text(path, "thread-" + int_str(cast(arg, "int64")))
     } catch {
         set _ign = 0
     }
@@ -119,7 +119,7 @@ public fun cmd_selftest() {
     check(eq(json_stringify(json_parse(once)), once), "json parse and stringify are stable", ref ~failed)
 
     // файлы и хеш файла
-    set dir = join2(dir_temp(), "yuki-selftest-" + cast(now_ms(), "string"))
+    set dir = join2(dir_temp(), "yuki-selftest-" + int_str(now_ms()))
     dir_create_all(dir)
     set f = join2(dir, "a.txt")
     file_write_text(f, "yuki")
@@ -159,7 +159,7 @@ public fun cmd_selftest() {
 
     println("")
     if failed > 0 {
-        panic(err(cast(failed, "string") + " self-test check(s) failed", 799, "selftest"))
+        panic(err(int_str(failed) + " self-test check(s) failed", 799, "selftest"))
     }
     ok("all checks passed " + c_dim("(this build can hash, sign, verify and run threads)"))
 }

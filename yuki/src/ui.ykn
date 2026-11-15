@@ -8,7 +8,7 @@ load std.stdotool.format: format_bytes, format_percent
 load std.strings: parse_int, slice
 load .theme: paint, sym, grad
 load .explain: has_explain
-load .util: sjoin, str_repeat, str_split
+load .util: sjoin, str_repeat, str_split, int_str
 
 // ── палитра ─────────────────────────────────────────────────────────────
 
@@ -68,7 +68,7 @@ public fun bad(msg: string) {
 }
 
 public fun step(n: int64, total: int64, msg: string) {
-    println(c_dim("[" + cast(n, "string") + "/" + cast(total, "string") + "]") + " " + msg)
+    println(c_dim("[" + int_str(n) + "/" + int_str(total) + "]") + " " + msg)
 }
 
 public fun kv(key: string, value: string) {
@@ -79,7 +79,7 @@ public fun kv(key: string, value: string) {
 public fun fmt_secs(ms: int64) -> string {
     set whole = ms / 1000
     set tenth = (ms % 1000) / 100
-    return cast(whole, "string") + "." + cast(tenth, "string") + "s"
+    return int_str(whole) + "." + int_str(tenth) + "s"
 }
 
 public fun done(took_ms: int64, hint: string) {

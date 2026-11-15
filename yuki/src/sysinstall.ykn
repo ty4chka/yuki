@@ -37,7 +37,7 @@ load .policy: policy_check, policy_check_link
 load .verify: VerifyError, check_blake3, audit_tar
 load .apply: ApplyItem, apply_transaction, remove_package, rollback_locked, check_package
 load .sysdb: PkgRecord, is_held, is_explicit, mark_explicit, orphans, dependents_of, db_names, db_read, db_has, db_files, owner_of, f_kind, f_path, history_add
-load .util: now_ms, valid_name, valid_version, dep_name, str_starts, str_ends, join2, sjoin, str_lines, str_lower, str_pad_end, str_split
+load .util: now_ms, valid_name, valid_version, dep_name, str_starts, str_ends, join2, sjoin, str_lines, str_lower, str_pad_end, str_split, int_str
 
 fun sys_need_root() {
     if !is_root() {
@@ -74,7 +74,7 @@ fun ask(question: string, default_yes: bool) -> bool {
 
 fun show_plan(ref nodes: PNode[]) {
     println("")
-    println("  " + c_accent("::") + " " + c_bold("Packages") + " (" + cast(nodes.len(), "string") + ")  " + c_dim("target " + host_target()))
+    println("  " + c_accent("::") + " " + c_bold("Packages") + " (" + int_str(nodes.len()) + ")  " + c_dim("target " + host_target()))
     for i in 0..nodes.len() {
         set label = c_bold(nodes[i].rel.name) + " " + c_good(nodes[i].rel.version)
         set act = nodes[i].action
@@ -119,7 +119,7 @@ fun approve_builds(stage: string, ref nodes: PNode[]) {
         set name = nodes[i].rel.name
         warn(name + " has no binary for " + host_target() + ": it has to be built here")
         kv("build", sjoin(nodes[i].rel.build, " "))
-        kv("packages", cast(nodes[i].rel.files.len(), "string") + " files, listed in the signed index")
+        kv("packages", int_str(nodes[i].rel.files.len()) + " files, listed in the signed index")
         if nodes[i].rel.src_net {
             kv("network", "ALLOWED by this package")
         } else {
@@ -363,7 +363,7 @@ fun install_core(stage: string, ref roots: string[]) {
             vmap.push(view.add_node(nodes[i].rel.name, nodes[i].rel.version, pv))
         }
     }
-    view.set_phase(1, cast(work, "string") + " package(s) " + c_dim(sym("dot") + " signed by " + nodes[0].rel.signer))
+    view.set_phase(1, int_str(work) + " package(s) " + c_dim(sym("dot") + " signed by " + nodes[0].rel.signer))
 
     // порядок задач совпадает с порядком в sysbuild.child_fetch: узлы bin и src по порядку
     set jobmap: int64[] = []
@@ -373,7 +373,7 @@ fun install_core(stage: string, ref roots: string[]) {
         }
     }
     run_child(stage, "fetch", ref ~view, ref jobmap)
-    view.set_phase(2, "downloaded and built " + c_dim(sym("dot") + " " + cast(jobmap.len(), "string") + " archive(s) in parallel"))
+    view.set_phase(2, "downloaded and built " + c_dim(sym("dot") + " " + int_str(jobmap.len()) + " archive(s) in parallel"))
 
     set items: ApplyItem[] = []
     set unpinned = collect(stage, ref nodes, ref items)
@@ -423,7 +423,7 @@ fun install_core(stage: string, ref roots: string[]) {
         }
     }
     if unpinned > 0 {
-        warn(cast(unpinned, "string") + " source build(s) could not be compared with a signed hash")
+        warn(int_str(unpinned) + " source build(s) could not be compared with a signed hash")
     }
     println("")
     done(now_ms() - t0, "undo with `sudo yuki rollback " + txid + "`")
@@ -494,7 +494,7 @@ public fun cmd_sys_uninstall(name: string, force: bool) {
     sys_need_root()
     set rec = db_read(name)
     println("")
-    println("  " + c_accent("::") + " Remove " + c_bold(rec.name) + " " + c_good(rec.version) + " (" + cast(db_files(name).len(), "string") + " files)")
+    println("  " + c_accent("::") + " Remove " + c_bold(rec.name) + " " + c_good(rec.version) + " (" + int_str(db_files(name).len()) + " files)")
     set dependents = dependents_of(name)
     if dependents.len() > 0 {
         warn("required by: " + sjoin(dependents, ", "))
@@ -524,7 +524,7 @@ public fun cmd_sys_autoremove() {
         return
     }
     println("")
-    println("  " + c_accent("::") + " " + c_bold("Orphans") + " (" + cast(orph.len(), "string") + ")  " + c_dim("installed as dependencies, nothing needs them now"))
+    println("  " + c_accent("::") + " " + c_bold("Orphans") + " (" + int_str(orph.len()) + ")  " + c_dim("installed as dependencies, nothing needs them now"))
     for i in 0..orph.len() {
         println("    " + c_warn("-") + " " + orph[i])
     }
@@ -600,7 +600,7 @@ public fun cmd_sys_upgrade(only: string) {
         return
     }
     println("")
-    println("  " + c_accent("::") + " " + c_bold("Upgrades") + " (" + cast(todo.len(), "string") + ")")
+    println("  " + c_accent("::") + " " + c_bold("Upgrades") + " (" + int_str(todo.len()) + ")")
     for i in 0..todo.len() {
         println("    " + c_good("+") + " " + c_bold(str_pad_end(todo[i], 18)) + c_dim(news[i]))
     }
@@ -635,8 +635,8 @@ public fun cmd_sys_info(name: string) {
     kv("checksum", r.checksum)
     kv("signed by", r.signer)
     kv("depends", r.deps)
-    kv("files", cast(db_files(name).len(), "string"))
-    kv("installed", cast(r.installed_at, "string") + " (unix time)")
+    kv("files", int_str(db_files(name).len()))
+    kv("installed", int_str(r.installed_at) + " (unix time)")
 }
 
 public fun cmd_sys_files(name: string) {
@@ -679,7 +679,7 @@ public fun cmd_sys_check(only: string) {
         }
     }
     if total > 0 {
-        panic(err(cast(total, "string") + " problem(s) found", 756, ""))
+        panic(err(int_str(total) + " problem(s) found", 756, ""))
     }
 }
 
@@ -699,7 +699,7 @@ public fun cmd_sys_audit() {
         }
     }
     if problems > 0 {
-        panic(err(cast(problems, "string") + " withdrawn package(s): consider `sudo yuki uninstall`", 757, ""))
+        panic(err(int_str(problems) + " withdrawn package(s): consider `sudo yuki uninstall`", 757, ""))
     }
 }
 
@@ -741,7 +741,7 @@ public fun cmd_sys_rollback(txid: string) {
         if best == 0 {
             panic(err("no transaction to roll back", 731, ""))
         }
-        rewrite target = cast(best, "string")
+        rewrite target = int_str(best)
     }
     if !flag("YUKI_YES") {
         if !ask("Roll back transaction " + target + "?", false) {

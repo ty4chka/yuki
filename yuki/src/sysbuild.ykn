@@ -18,7 +18,7 @@ load std.fs.archives.tar: tar_unpack
 load std.os.unix: chmod
 load std.env: get_or
 load std.strings: eq, trim, slice
-load .util: str_starts, join2, str_lines, str_split
+load .util: str_starts, join2, str_lines, str_split, int_str
 load .errors: YukiError, err
 load .config: config_dir, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
 load .verify: VerifyError, check_blake3, audit_tar
@@ -153,7 +153,7 @@ fun run_build(workdir: string, argv: string[], net: bool, policy: string) {
         }
         set st = command_new("timeout").args(cmd).env_clear().env("PATH", "/usr/local/bin:/usr/bin:/bin").status()
         if !st.success {
-            panic(err("build failed (exit " + cast(st.code, "string") + ")", 743, workdir))
+            panic(err("build failed (exit " + int_str(st.code) + ")", 743, workdir))
         }
         return
     }
@@ -162,7 +162,7 @@ fun run_build(workdir: string, argv: string[], net: bool, policy: string) {
     }
     set st = command_new("timeout").args(cmd).env_clear().env("PATH", "/usr/local/bin:/usr/bin:/bin:" + tdir).env("HOME", workdir).current_dir(workdir).status()
     if !st.success {
-        panic(err("build failed (exit " + cast(st.code, "string") + ")", 743, workdir))
+        panic(err("build failed (exit " + int_str(st.code) + ")", 743, workdir))
     }
 }
 

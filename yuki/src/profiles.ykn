@@ -16,7 +16,7 @@ load std.strings: eq, trim, contains, slice
 load .errors: YukiError, err
 load .config: state_dir
 load .priv: is_root
-load .util: valid_name, now_secs, str_ends, str_starts, join2, str_lower, sjoin, str_pad_end, plural
+load .util: valid_name, now_secs, str_ends, str_starts, join2, str_lower, sjoin, str_pad_end, plural, int_str
 load .ui: ok, info, warn, bad, card, kv, c_accent, c_good, c_warn, c_bad, c_dim
 load .theme: sym
 load .sysdb: db_has
@@ -199,9 +199,9 @@ public fun cmd_profile_add(name: string, ref pkgs: string[]) {
     set n_all = all.len()
     save_profile(name, ref all)
     if have {
-        ok("profile " + c_accent(name) + " updated: " + c_dim(cast(n_all, "string") + " " + plural(n_all, "package", "packages")))
+        ok("profile " + c_accent(name) + " updated: " + c_dim(int_str(n_all) + " " + plural(n_all, "package", "packages")))
     } else {
-        ok("profile " + c_accent(name) + " created: " + c_dim(cast(n_all, "string") + " " + plural(n_all, "package", "packages")))
+        ok("profile " + c_accent(name) + " created: " + c_dim(int_str(n_all) + " " + plural(n_all, "package", "packages")))
     }
     println("      " + c_dim(sjoin(all, ", ")))
     info("install everything with `sudo yuki profile install " + name + "`")
@@ -235,7 +235,7 @@ public fun cmd_profile_remove(name: string, ref pkgs: string[]) {
     }
     set n_all = all.len()
     save_profile(name, ref all)
-    ok("profile " + c_accent(name) + " updated: " + c_dim(cast(n_all, "string") + " " + plural(n_all, "package", "packages")))
+    ok("profile " + c_accent(name) + " updated: " + c_dim(int_str(n_all) + " " + plural(n_all, "package", "packages")))
 }
 
 // ── profile list / show / install ───────────────────────────────────────
@@ -245,14 +245,14 @@ public fun cmd_profile_list() {
     for i in 0..loc.len() {
         set doc = load_profile(loc[i])
         set pk = profile_pkgs(doc)
-        println("  " + c_accent(str_pad_end(loc[i], 16)) + " " + c_dim("local") + "   " + c_dim(cast(pk.len(), "string") + ": " + sjoin(pk, ", ")))
+        println("  " + c_accent(str_pad_end(loc[i], 16)) + " " + c_dim("local") + "   " + c_dim(int_str(pk.len()) + ": " + sjoin(pk, ", ")))
     }
     set rem = catalog_profiles()
     for i in 0..rem.len() {
         set nm = rem.at(i).get("name").as_string_or("")
         set sm = rem.at(i).get("summary").as_string_or("")
         set pk = rem.at(i).get("packages")
-        println("  " + c_accent(str_pad_end(nm, 16)) + " " + c_dim("catalog") + " " + c_dim(cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages")))
+        println("  " + c_accent(str_pad_end(nm, 16)) + " " + c_dim("catalog") + " " + c_dim(int_str(pk.len()) + " " + plural(pk.len(), "package", "packages")))
         if sm.len() > 0 {
             println("      " + c_dim(sm))
         }
@@ -268,7 +268,7 @@ public fun cmd_profile_show(name: string) {
     set source = ""
     set pk = find_profile(name, ref ~source)
     set rows: string[] = []
-    rows.push(c_accent(name) + "  " + c_dim(source + " profile, " + cast(pk.len(), "string") + " " + plural(pk.len(), "package", "packages")))
+    rows.push(c_accent(name) + "  " + c_dim(source + " profile, " + int_str(pk.len()) + " " + plural(pk.len(), "package", "packages")))
     for i in 0..pk.len() {
         set mark = ""
         if db_has(pk[i]) {
@@ -295,7 +295,7 @@ public fun cmd_profile_install(name: string) {
         }
         rewrite listing = listing + pk[i]
     }
-    println("  " + c_accent(name) + " " + c_dim(source + " profile, " + cast(n_pk, "string") + " " + plural(n_pk, "package", "packages") + ": " + listing))
+    println("  " + c_accent(name) + " " + c_dim(source + " profile, " + int_str(n_pk) + " " + plural(n_pk, "package", "packages") + ": " + listing))
     cmd_sys_install_many(ref pk)
 }
 
@@ -364,7 +364,7 @@ public fun cmd_catalog(query: string) {
     }
     if q.len() == 0 {
         println("")
-        info(cast(shown, "string") + " " + plural(shown, "package", "packages") + "  " + sym("dot") + "  topics: `yuki tags`  " + sym("dot") + "  bundles: `yuki profile list`")
+        info(int_str(shown) + " " + plural(shown, "package", "packages") + "  " + sym("dot") + "  topics: `yuki tags`  " + sym("dot") + "  bundles: `yuki profile list`")
     }
 }
 
@@ -417,7 +417,7 @@ public fun cmd_tags(prefix: string) {
         if prefix.len() > 0 && !str_starts(names[i], str_lower(prefix)) {
             continue
         }
-        println("  " + c_accent(str_pad_end(names[i], 18)) + c_dim(cast(counts[i], "string") + " " + plural(counts[i], "package", "packages") + "  " + sym("dot") + "  yuki search tag:" + names[i]))
+        println("  " + c_accent(str_pad_end(names[i], 18)) + c_dim(int_str(counts[i]) + " " + plural(counts[i], "package", "packages") + "  " + sym("dot") + "  yuki search tag:" + names[i]))
         rewrite shown += 1
     }
     if shown == 0 {

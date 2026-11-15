@@ -34,7 +34,7 @@ load .index: seen_get, seen_set
 load .fetch: http_text
 load .explain: explain_lines
 load .cmdlist: help_lines, suggest, completion_script
-load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2, sjoin, str_lines, str_lower, str_pad_end, str_split, str_ends
+load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2, sjoin, str_lines, str_lower, str_pad_end, str_split, str_ends, int_str
 
 fun yn(b: bool) -> string {
     if b {
@@ -126,7 +126,7 @@ public fun cmd_show(spec: string) {
     }
     if nodes.len() > 1 {
         println("")
-        println("  " + c_accent("::") + " would install " + cast(nodes.len(), "string") + " packages:")
+        println("  " + c_accent("::") + " would install " + int_str(nodes.len()) + " packages:")
         for i in 0..nodes.len() {
             println("      " + nodes[i].rel.name + " " + c_dim(nodes[i].rel.version + "  " + nodes[i].action))
         }
@@ -463,9 +463,9 @@ public fun cmd_doctor() {
     chk(idx.len() > 0, "index " + c_dim(idx), "no index is configured", "export YUKI_INDEX=https://raw.githubusercontent.com/<org>/<repo>/main  (or write it to " + config_dir() + "/index_url)", ref ~problems)
 
     set keys = trusted_keys()
-    chk(keys.len() > 0, cast(keys.len(), "string") + " trusted key(s)", "no trusted keys", "yuki keys trust <name> <pubkey>   (sudo for system installs)", ref ~problems)
+    chk(keys.len() > 0, int_str(keys.len()) + " trusted key(s)", "no trusted keys", "yuki keys trust <name> <pubkey>   (sudo for system installs)", ref ~problems)
     if keys.len() > 0 {
-        chk(threshold() >= 2 || keys.len() < 2, "key rotation threshold " + cast(threshold(), "string"), "single-signer rotation", "echo 2 | sudo tee " + config_dir() + "/threshold   (2 of 3 recommended)", ref ~problems)
+        chk(threshold() >= 2 || keys.len() < 2, "key rotation threshold " + int_str(threshold()), "single-signer rotation", "echo 2 | sudo tee " + config_dir() + "/threshold   (2 of 3 recommended)", ref ~problems)
     }
 
     chk(have_bwrap(), "bubblewrap found: source builds are sandboxed", "bubblewrap is missing", "install it (apt/pacman/dnf: bubblewrap); without it builds from source are refused", ref ~problems)
@@ -489,7 +489,7 @@ public fun cmd_doctor() {
         chk(bits == zero, cfg + " is not writable by others", cfg + " is writable by group/others", "sudo chmod go-w " + cfg + "   (anyone could add trusted keys)", ref ~problems)
     }
     chk(!dir_exists(join2(state_dir(), "lock")), "no stale lock", "a lock directory exists", "if no yuki is running, remove it: sudo rm -r " + join2(state_dir(), "lock"), ref ~problems)
-    chk(db_names().len() >= 0, cast(db_names().len(), "string") + " package(s) in the database", "database unreadable", "check permissions of " + state_dir(), ref ~problems)
+    chk(db_names().len() >= 0, int_str(db_names().len()) + " package(s) in the database", "database unreadable", "check permissions of " + state_dir(), ref ~problems)
 
     if idx.len() > 0 {
         set reach = true
@@ -504,7 +504,7 @@ public fun cmd_doctor() {
     if problems == 0 {
         ok("all good")
     } else {
-        warn(cast(problems, "string") + " thing(s) to look at")
+        warn(int_str(problems) + " thing(s) to look at")
     }
 }
 
@@ -525,11 +525,11 @@ public fun cmd_config() {
     }
     kv("index", idx)
     kv("platform", host_target())
-    kv("trusted keys", cast(trusted_keys().len(), "string") + ", threshold " + cast(threshold(), "string"))
+    kv("trusted keys", int_str(trusted_keys().len()) + ", threshold " + int_str(threshold()))
     kv("sandbox", build_policy())
     kv("theme", theme_path() + ", palette " + theme_palette())
     kv("animation", yn(animation_on()))
-    kv("held", cast(held_names().len(), "string") + " package(s)")
+    kv("held", int_str(held_names().len()) + " package(s)")
     println("")
 }
 
@@ -554,7 +554,7 @@ public fun cmd_clean(everything: bool) {
             dir_remove_all(stage)
         }
     }
-    ok("removed " + cast(count, "string") + " file(s), freed " + format_bytes(freed))
+    ok("removed " + int_str(count) + " file(s), freed " + format_bytes(freed))
 }
 
 // ── hold, export, import ────────────────────────────────────────────────
@@ -647,7 +647,7 @@ public fun cmd_explain(code: string) {
 }
 
 fun pad_start_zero(n: int64) -> string {
-    set s = cast(n, "string")
+    set s = int_str(n)
     for k in 0..(4 - s.len()) {
         rewrite s = "0" + s
     }
@@ -728,12 +728,12 @@ public fun cmd_pack(name: string, dir: string, out: string) {
         }
     }
     if problems > 0 {
-        panic(err(cast(problems, "string") + " path(s) break the install policy", 721, dir))
+        panic(err(int_str(problems) + " path(s) break the install policy", 721, dir))
     }
     tar_pack_tree(out, dir)
     set rep = audit_tar(out, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, true)
     set checksum = "blake3:" + blake3_file(out)
-    ok("packed " + cast(count, "string") + " files " + c_dim("(" + format_bytes(file_size(out)) + ")"))
+    ok("packed " + int_str(count) + " files " + c_dim("(" + format_bytes(file_size(out)) + ")"))
     ok("archive audit passed")
     println("")
     println("  " + c_dim("paste into your release json:"))

@@ -10,7 +10,7 @@ load std.fs.files: file_exists, file_read_text, file_write_text, file_append_tex
 load std.fs.dirs: dir_create_all, dir_exists, dir_list, dir_remove_all
 load std.fs.paths: path_file_name
 load std.strings: trim, eq, slice, parse_int
-load .util: str_index, join2, sjoin, str_lines, str_split
+load .util: str_index, join2, sjoin, str_lines, str_split, int_str
 load .errors: YukiError, err
 load .config: state_dir, resolve_config_file
 
@@ -89,7 +89,7 @@ public fun db_write(rec: PkgRecord, ref files: string[]) {
         "signer=" + rec.signer,
         "origin=" + rec.origin,
         "deps=" + rec.deps,
-        "installed_at=" + cast(rec.installed_at, "string"),
+        "installed_at=" + int_str(rec.installed_at),
         "reason=" + rec.reason,
         "summary=" + rec.summary
     ]

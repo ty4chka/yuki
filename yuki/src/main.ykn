@@ -5,7 +5,7 @@ load core.panic: panic
 load core.process: exit, args
 load std.io: println
 load std.strings: eq, slice, parse_int
-load .util: str_starts, sjoin
+load .util: str_starts, sjoin, int_str
 load std.env: get_or, set_env
 load std.fs.archives.tar: TarError
 load .ui: banner, diag_error, warn, c_dim, c_accent
@@ -79,7 +79,7 @@ fun usage() {
 }
 
 fun code_str(n: int32) -> string {
-    set s = cast(n, "string")
+    set s = int_str(n)
     for i in 0..(4 - s.len()) {
         rewrite s = "0" + s
     }

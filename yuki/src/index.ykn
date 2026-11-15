@@ -28,7 +28,7 @@ load .config: index_urls, state_dir, ensure_dirs, host_target, MAX_INDEX_FILE
 load .fetch: http_text, check_url
 load .trust: trusted_keys, trusted_roles, publish_threshold, fingerprint
 load .verify: VerifyError, verify_text, checksum_ok_format, is_safe_rel_path
-load .util: valid_name, valid_version, ver_cmp, now_secs, valid_dep_spec, join2, sjoin, str_lines, str_lower, str_pad_end, str_split
+load .util: valid_name, valid_version, ver_cmp, now_secs, valid_dep_spec, join2, sjoin, str_lines, str_lower, str_pad_end, str_split, int_str
 
 public struct Release {
     name: string
@@ -103,7 +103,7 @@ public fun seen_set(name: string, seq: int64) {
             set p = str_split(trim(ls[i]), " ")
             if p.len() == 2 {
                 if eq(p[0], name) {
-                    out.push(name + " " + cast(seq, "string"))
+                    out.push(name + " " + int_str(seq))
                     rewrite found = true
                 } else {
                     out.push(trim(ls[i]))
@@ -112,7 +112,7 @@ public fun seen_set(name: string, seq: int64) {
         }
     }
     if !found {
-        out.push(name + " " + cast(seq, "string"))
+        out.push(name + " " + int_str(seq))
     }
     file_write_text(f, sjoin(out, "\n") + "\n")
 }
@@ -255,7 +255,7 @@ fun verify_content(doc: JsonValue, ref keys: string[], ref roles: string[], ref 
     set need = publish_threshold()
     if pubs.len() < need {
         panic(VerifyError {
-            message: "needs " + cast(need, "string") + " publisher signature(s) on the releases, found " + cast(pubs.len(), "string") + " (a renewer key cannot approve content)",
+            message: "needs " + int_str(need) + " publisher signature(s) on the releases, found " + int_str(pubs.len()) + " (a renewer key cannot approve content)",
             code: 3,
             path: rel_path,
         })

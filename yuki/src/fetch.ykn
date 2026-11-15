@@ -13,7 +13,7 @@ load std.fs.files: File, file_open_write, file_remove, file_write_text
 load std.stdotool.format: format_speed
 load .errors: YukiError, err
 load .config: host_allowed
-load .util: now_ms, str_starts, str_index, str_lower, str_split
+load .util: now_ms, str_starts, str_index, str_lower, str_split, int_str
 
 public struct Response {
     status: int32
@@ -98,7 +98,7 @@ fun read_chunk(ref ~tls: TlsStream) -> string {
     for i in 0..n {
         out.push(buf[i])
     }
-    return cast(out, "string")
+    return int_str(out)
 }
 
 fun hexval(ch: string) -> int64 {
@@ -204,7 +204,7 @@ fun write_progress(prog_path: string, received: int64, total: int64, last: int64
         return last
     }
     sus {
-        file_write_text(prog_path, cast(received, "string") + " " + cast(total, "string"))
+        file_write_text(prog_path, int_str(received) + " " + int_str(total))
     } catch {
         set _ign = 0
     }
@@ -351,7 +351,7 @@ fun fetch_once(url: string, dest: string, max_bytes: int64, prog_path: string) -
     }
     if prog_path.len() > 0 {
         sus {
-            file_write_text(prog_path, cast(received, "string") + " " + cast(received, "string"))
+            file_write_text(prog_path, int_str(received) + " " + int_str(received))
         } catch {
             set _ign = 0
         }
@@ -393,7 +393,7 @@ fun get_follow(url: string, dest: string, max_bytes: int64, prog_path: string) -
 public fun http_text(url: string, max_bytes: int64) -> string {
     set r = get_follow(url, "", max_bytes, "")
     if r.status != 200 {
-        panic(err("HTTP " + cast(r.status, "string") + " for " + url, 404, url))
+        panic(err("HTTP " + int_str(r.status) + " for " + url, 404, url))
     }
     return r.body
 }
@@ -403,7 +403,7 @@ public fun download(url: string, dest: string, max_bytes: int64, prog_path: stri
     set r = get_follow(url, dest, max_bytes, prog_path)
     if r.status != 200 {
         file_remove(dest)
-        panic(err("HTTP " + cast(r.status, "string") + " for " + url, 404, url))
+        panic(err("HTTP " + int_str(r.status) + " for " + url, 404, url))
     }
     return r.received
 }

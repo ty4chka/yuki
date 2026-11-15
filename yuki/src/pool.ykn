@@ -23,18 +23,18 @@ load .fetch: download
 load .pipeline: fetch_verified
 load .verify: VerifyError, check_blake3
 load .view: InstallView
-load .util: now_ms, join2, str_split
+load .util: now_ms, join2, str_split, int_str
 
 fun p_job(dir: string, i: int64) -> string {
-    return join2(dir, "job-" + cast(i, "string"))
+    return join2(dir, "job-" + int_str(i))
 }
 
 fun p_prog(dir: string, i: int64) -> string {
-    return join2(dir, "prog-" + cast(i, "string"))
+    return join2(dir, "prog-" + int_str(i))
 }
 
 fun p_state(dir: string, i: int64) -> string {
-    return join2(dir, "state-" + cast(i, "string"))
+    return join2(dir, "state-" + int_str(i))
 }
 
 public fun pool_prepare(dir: string) {
@@ -56,12 +56,12 @@ fun run_job(dir: string, i: int64) {
     set prog = p_prog(dir, i)
     if eq(kind, "cache") {
         set got = fetch_verified(url, checksum, label, prog)
-        file_write_text(p_state(dir, i), "ok\n" + got.path + "\t" + cast(got.bytes, "string"))
+        file_write_text(p_state(dir, i), "ok\n" + got.path + "\t" + int_str(got.bytes))
     } else {
         dir_create_all(path_parent(dest))
         set size = download(url, dest, MAX_DOWNLOAD, prog)
         check_blake3(dest, checksum)
-        file_write_text(p_state(dir, i), "ok\n" + dest + "\t" + cast(size, "string"))
+        file_write_text(p_state(dir, i), "ok\n" + dest + "\t" + int_str(size))
     }
 }
 
@@ -73,9 +73,9 @@ fun pool_worker(arg: ptr<void>) {
     sus {
         run_job(dir, i)
     } catch e: YukiError {
-        file_write_text(p_state(dir, i), "err\n" + cast(e.code, "string") + "\n" + e.message)
+        file_write_text(p_state(dir, i), "err\n" + int_str(e.code) + "\n" + e.message)
     } catch e: VerifyError {
-        file_write_text(p_state(dir, i), "err\n" + cast(300 + e.code, "string") + "\n" + e.message)
+        file_write_text(p_state(dir, i), "err\n" + int_str(300 + e.code) + "\n" + e.message)
     } catch {
         file_write_text(p_state(dir, i), "err\n755\nworker failed: " + errkind)
     }

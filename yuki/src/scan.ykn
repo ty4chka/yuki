@@ -21,7 +21,7 @@ load std.strings: eq, contains
 load .errors: YukiError, err
 load .ui: ok, info, warn, bad, card, c_accent, c_good, c_bad, c_dim, c_warn, c_bold
 load .theme: sym
-load .util: str_starts, join2, str_lower, str_pad_end
+load .util: str_starts, join2, str_lower, str_pad_end, int_str
 
 public struct ScanHit {
     sev: string      // "high" | "med" | "low"
@@ -219,7 +219,7 @@ public fun print_report(pkg: string, ref hits: ScanHit[]) -> int64 {
     println("")
     println("  " + c_accent("::") + " " + c_bold(pkg) + " " + c_dim("content scan"))
     card(ref rows)
-    println("  " + c_dim("findings: " + cast(nhigh, "string") + " high " + sym("dot") + " " + cast(nmed, "string") + " med " + sym("dot") + " " + cast(nlow, "string") + " low"))
+    println("  " + c_dim("findings: " + int_str(nhigh) + " high " + sym("dot") + " " + int_str(nmed) + " med " + sym("dot") + " " + int_str(nlow) + " low"))
     set worst: int64 = 0
     for i in 0..hits.len() {
         if eq(hits[i].sev, "high") {

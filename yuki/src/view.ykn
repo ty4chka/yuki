@@ -18,7 +18,7 @@ load std.stdotool.live_area: LiveArea
 load std.io: println
 load .ui: ok, rule, c_accent, c_good, c_warn, c_bad, c_dim, c_speed, c_bold, render_bar
 load .theme: sym, spinner_frames, paint
-load .util: now_ms, str_pad_end
+load .util: now_ms, str_pad_end, int_str
 
 public class InstallView {
     public animated: bool
@@ -147,7 +147,7 @@ public class InstallView {
     fun node_state(i: int64) -> string {
         set st = this.states[i]
         if st == 1 {
-            return c_warn(this.spin()) + " " + render_bar(this.pcts[i], 100, 10) + " " + cast(this.pcts[i], "string") + "%"
+            return c_warn(this.spin()) + " " + render_bar(this.pcts[i], 100, 10) + " " + int_str(this.pcts[i]) + "%"
         }
         if st == 2 {
             return c_good(sym("ok")) + " " + c_dim("downloaded")
@@ -163,7 +163,7 @@ public class InstallView {
 
     fun active_note(p: int64) -> string {
         if p == 0 {
-            return c_dim("resolving " + cast(this.names.len(), "string") + " found")
+            return c_dim("resolving " + int_str(this.names.len()) + " found")
         }
         if p == 1 {
             set sum: int64 = 0
@@ -178,7 +178,7 @@ public class InstallView {
             if this.activity.len() > 0 {
                 rewrite tail = c_warn(this.activity)
             }
-            return render_bar(sum, total, 20) + " " + cast(sum * 100 / total, "string") + "%  " + tail
+            return render_bar(sum, total, 20) + " " + int_str(sum * 100 / total) + "%  " + tail
         }
         return c_dim("writing yuki.toml")
     }
