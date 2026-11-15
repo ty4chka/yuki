@@ -4,11 +4,11 @@
 load core.utils: cast
 load std.io: println, eprintln
 load std.outf: style, visible_len
-load std.stdotool.format: format_bytes, format_percent
+
 load std.strings: parse_int, slice
 load .theme: paint, sym, grad
 load .explain: has_explain
-load .util: sjoin, str_repeat, str_split, int_str
+load .util: sjoin, str_repeat, str_split, int_str, fmt_bytes, fmt_speed
 
 // ── палитра ─────────────────────────────────────────────────────────────
 
@@ -168,11 +168,11 @@ public fun render_bar(cur: int64, total: int64, width: int64) -> string {
 }
 
 public fun progress_line(label: string, cur: int64, total: int64) -> string {
-    set pct = format_percent(cur, total)
-    set size = format_bytes(cur) + " / " + format_bytes(total)
+    set pct = int_str(cur * 100 / total) + "%"
+    set size = fmt_bytes(cur) + " / " + fmt_bytes(total)
     return "  " + c_accent(label) + " " + render_bar(cur, total, 24) + " " + pct + "  " + c_dim(size)
 }
 
 public fun bytes_line(label: string, received: int64) -> string {
-    return "  " + c_accent(label) + " " + c_dim("downloading… ") + format_bytes(received)
+    return "  " + c_accent(label) + " " + c_dim("downloading… ") + fmt_bytes(received)
 }

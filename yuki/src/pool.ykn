@@ -15,7 +15,7 @@ load std.env: get_or, set_env
 load std.fs.files: file_exists, file_read_text, file_write_text
 load std.fs.dirs: dir_create_all
 load std.fs.paths: path_parent
-load std.stdotool.format: format_speed
+
 load std.strings: parse_int, eq
 load .errors: YukiError, err
 load .config: MAX_DOWNLOAD
@@ -23,7 +23,7 @@ load .fetch: download
 load .pipeline: fetch_verified
 load .verify: VerifyError, check_blake3
 load .view: InstallView
-load .util: now_ms, join2, str_split, int_str
+load .util: now_ms, join2, str_split, int_str, fmt_bytes, fmt_speed
 
 fun p_job(dir: string, i: int64) -> string {
     return join2(dir, "job-" + int_str(i))
@@ -143,7 +143,7 @@ public fun pool_paint(dir: string, count: int64, ref nidx: int64[], t0: int64, r
     }
     set el = now_ms() - t0
     if el > 0 && sum > 0 {
-        view.set_speed(format_speed(sum * 1000 / el))
+        view.set_speed(fmt_speed(sum * 1000 / el))
     }
 }
 

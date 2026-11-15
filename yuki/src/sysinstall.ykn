@@ -19,7 +19,6 @@ load std.os.unix: chmod
 load std.fs.archives.tar: tar_unpack, tar_list, TarError
 load std.hash.blake3: blake3_file
 load std.process: run
-load std.stdotool.format: format_bytes
 load std.strings: eq, trim, parse_int, contains, slice
 load .errors: YukiError, err
 load .config: state_dir, host_target, MAX_ENTRIES, MAX_TOTAL, MAX_FILE

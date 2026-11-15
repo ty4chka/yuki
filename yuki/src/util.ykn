@@ -252,3 +252,31 @@ public fun int_str(n: int64) -> string {
     }
     return out
 }
+
+// Байты в человекочитаемый вид (замена std.stdotool.format.format_bytes,
+// которая внутри идёт через сломанный int->string).
+public fun fmt_bytes(n: int64) -> string {
+    if n < 1024 {
+        return int_str(n) + " B"
+    }
+    set v: int64 = n
+    set units: string[] = ["KiB", "MiB", "GiB", "TiB"]
+    set ui: int64 = 0
+    set rest: int64 = 0
+    loop {
+        rewrite rest = v % 1024
+        rewrite v = v / 1024
+        if v < 1024 || ui >= 3 {
+            break
+        }
+        rewrite ui += 1
+    }
+    // одна десятая: rest*10/1024
+    set tenth: int64 = (rest * 10) / 1024
+    return int_str(v) + "." + int_str(tenth) + " " + units[ui]
+}
+
+// Скорость в человекочитаемый вид (замена format_speed).
+public fun fmt_speed(bytes_per_sec: int64) -> string {
+    return fmt_bytes(bytes_per_sec) + "/s"
+}

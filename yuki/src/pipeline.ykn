@@ -5,7 +5,6 @@
 load core.panic: panic
 load std.fs.files: file_exists, file_remove, file_rename, file_size
 load std.hash.blake3: blake3_file
-load std.stdotool.format: format_bytes
 load std.strings: slice
 load .util: str_ends, join2, str_lower
 load .errors: YukiError, err

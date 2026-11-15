@@ -12,7 +12,7 @@ load std.fs.dirs: dir_exists, dir_walk, dir_remove_all, dir_create_all
 load std.hash.blake3: blake3_file
 load std.outf: supports_truecolor
 load std.process: run
-load std.stdotool.format: format_bytes
+
 load std.strings: eq, trim, contains, slice, parse_int
 load .errors: YukiError, err
 load .config: config_dir, state_dir, cache_dir, index_url, host_target, system_mode, MAX_ENTRIES, MAX_TOTAL, MAX_FILE
@@ -34,7 +34,7 @@ load .index: seen_get, seen_set
 load .fetch: http_text
 load .explain: explain_lines
 load .cmdlist: help_lines, suggest, completion_script
-load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2, sjoin, str_lines, str_lower, str_pad_end, str_split, str_ends, int_str
+load .util: now_secs, valid_name, valid_version, ver_cmp, str_starts, str_index, join2, sjoin, str_lines, str_lower, str_pad_end, str_split, str_ends, int_str, fmt_bytes, fmt_speed
 
 fun yn(b: bool) -> string {
     if b {
@@ -554,7 +554,7 @@ public fun cmd_clean(everything: bool) {
             dir_remove_all(stage)
         }
     }
-    ok("removed " + int_str(count) + " file(s), freed " + format_bytes(freed))
+    ok("removed " + int_str(count) + " file(s), freed " + fmt_bytes(freed))
 }
 
 // ── hold, export, import ────────────────────────────────────────────────
@@ -733,7 +733,7 @@ public fun cmd_pack(name: string, dir: string, out: string) {
     tar_pack_tree(out, dir)
     set rep = audit_tar(out, MAX_ENTRIES, MAX_TOTAL, MAX_FILE, true)
     set checksum = "blake3:" + blake3_file(out)
-    ok("packed " + int_str(count) + " files " + c_dim("(" + format_bytes(file_size(out)) + ")"))
+    ok("packed " + int_str(count) + " files " + c_dim("(" + fmt_bytes(file_size(out)) + ")"))
     ok("archive audit passed")
     println("")
     println("  " + c_dim("paste into your release json:"))

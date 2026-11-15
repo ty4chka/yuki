@@ -10,7 +10,6 @@ load core.panic: panic
 load std.net: tcp_connect, tls_connect, TlsStream
 load std.strings: trim, slice, contains, eq, parse_int
 load std.fs.files: File, file_open_write, file_remove, file_write_text
-load std.stdotool.format: format_speed
 load .errors: YukiError, err
 load .config: host_allowed
 load .util: now_ms, str_starts, str_index, str_lower, str_split, int_str
