@@ -75,7 +75,7 @@ fun pool_worker(arg: ptr<void>) {
     } catch e: YukiError {
         file_write_text(p_state(dir, i), "err\n" + int_str(cast(e.code, "int64")) + "\n" + e.message)
     } catch e: VerifyError {
-        file_write_text(p_state(dir, i), "err\n" + int_str(300 + e.code) + "\n" + e.message)
+        file_write_text(p_state(dir, i), "err\n" + int_str(cast(300 + e.code, "int64")) + "\n" + e.message)
     } catch {
         file_write_text(p_state(dir, i), "err\n755\nworker failed: " + errkind)
     }
